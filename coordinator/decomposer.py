@@ -22,18 +22,18 @@ Rules:
 5. Allowed skill tags: math, proof, numeric, code, refactor, debug, reasoning, planning, analysis, docs, testing, security, performance.
 
 Output ONLY valid JSON matching this schema:
-{
+{{
   "subtasks": [
-    {
+    {{
       "goal": "...",
       "scope": ["path/to/file.py"],
       "constraints": "...",
       "expected_output": "...",
       "required_skills": ["code", "refactor"]
-    }
+    }}
   ],
   "split_rationale": "..."
-}
+}}
 """
 
 DECOMPOSE_USER = """Hypothesis: {hypothesis}

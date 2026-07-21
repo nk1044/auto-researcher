@@ -152,7 +152,7 @@ class Coordinator:
                     {"error": str(exc), "iteration": self.state.iteration},
                     iteration=self.state.iteration,
                 )
-                # Loop continues unconditionally
+                await asyncio.sleep(5)  # backoff before retrying
 
         await self._drain_and_flush()
 

@@ -148,14 +148,15 @@ class SemanticMemory:
             return []
 
         def _fetch() -> list[dict]:
-            import pandas as pd
-            df = self._table.to_pandas()
-            wins = (
-                df[df["outcome"] == OutcomeType.WIN.value]
-                .sort_values("score", ascending=False)
-                .head(k)
-            )
-            return wins.to_dict(orient="records")
+            import pyarrow.compute as pc
+            tbl = self._table.to_arrow()
+            mask = pc.equal(tbl.column("outcome"), OutcomeType.WIN.value)
+            wins = tbl.filter(mask)
+            if wins.num_rows == 0:
+                return []
+            indices = pc.sort_indices(wins, sort_keys=[("score", "descending")])
+            top = wins.take(indices[:k])
+            return top.to_pylist()
 
         rows = await asyncio.to_thread(_fetch)
         return [self._row_to_entry(r) for r in rows]

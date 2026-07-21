@@ -1,22 +1,18 @@
 ollama_host: "http://localhost:11434"
 
 models:
-  coordinator: "magistral:24b"
-  default: "magistral:24b"
-  embed: "nomic-embed-text"
+  coordinator: "qwen2.5:14b-instruct"   # planning + hypothesis — fits in ~9GB at Q4
+  default:     "qwen2.5-coder:7b"        # fallback worker — ~4GB
+  embed:       "nomic-embed-text"         # 274MB, unchanged
 
   workers:
-    - name: "devstral-small-2:24b" 
-      skills: [
-        "code", "debug", "refactor", "architecture", "review", "test", "implementation", "optimization"
-      ]
+    - name: "qwen2.5-coder:7b"
+      skills: ["code", "debug", "refactor", "implementation", "optimization", "test"]
       options:
         temperature: 0.1
 
-    - name: "magistral:24b"
-      skills: [
-        "reasoning", "planning", "analysis", "math", "proof", "verification", "decomposition", "synthesis"
-      ]
+    - name: "qwen2.5:14b-instruct"
+      skills: ["reasoning", "planning", "analysis", "math", "proof", "decomposition", "synthesis"]
       options:
         temperature: 0.3
 
