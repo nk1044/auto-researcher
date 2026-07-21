@@ -39,7 +39,3 @@ services:
   #     ollama:
   #       condition: service_healthy
   #   restart: unless-stopped
-
-volumes:
-  # Placeholder declarations — actual storage uses bind mounts under ./volumes/
-  # so data lives directly in this project directory.
