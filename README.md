@@ -4,8 +4,6 @@ An autonomous AI agent that continuously improves a target software repository. 
 
 ## How It Works
 
-The agent runs a single feedback loop forever:
-
 ```
 form hypothesis
       │
@@ -52,91 +50,16 @@ The loop only exits when you click **Stop** in the dashboard.
 - **Live dashboard** — FastAPI + WebSocket, no build step required
 - **Resume after kill** — state is persisted after every iteration
 
-## Prerequisites
-
-- Python 3.11+
-- [Ollama](https://ollama.com) running locally (or on a remote host)
-- Git (with push access to your target repo's remote)
-- The following models pulled in Ollama:
-
-```bash
-ollama pull qwen2.5:14b-instruct
-ollama pull qwen2.5-coder:7b
-ollama pull nomic-embed-text
-```
-
-Optional specialist workers (add more in `config.yaml`):
-
-```bash
-ollama pull mathstral:7b
-ollama pull deepseek-r1:8b
-```
-
-## Installation
-
-```bash
-git clone <this-repo>
-cd auto-researcher
-pip install -r requirements.txt
-```
-
 ## Quick Start
 
-**1. Edit `config.yaml`**
+See [setup.md](setup.md) for installation, configuration, and first-run instructions.
 
-Set `target_repo` to the absolute path of the repository you want to improve:
+**Once installed:**
 
-```yaml
-target_repo: "/absolute/path/to/your/repo"
-```
-
-That is the only required change. Everything else has sensible defaults.
-
-**2. Add your test oracle**
-
-Edit `user_tools/test.py` to implement your scoring function. The default runs `pytest` and returns a pass-rate score:
-
-```python
-@tool(name="run_tests", description="Run tests and return a 0-1 score", kind="test")
-def run_tests(workspace: str) -> dict:
-    # your evaluation logic here
-    return {"score": 0.75, "remark": "60/80 tests passed"}
-```
-
-The score must be a float in `[0.0, 1.0]`. The agent maximizes it.
-
-**3. Start the server**
-
-```bash
-python main.py
-```
-
-**4. Open the dashboard**
-
-Go to `http://localhost:8000` and click **Start**.
-
-The agent begins immediately and runs until you click **Stop**.
-
-## Configuration
-
-All behaviour is driven by `config.yaml`. Key settings:
-
-| Key | Default | Description |
-|-----|---------|-------------|
-| `target_repo` | *(required)* | Absolute path to the repo to improve |
-| `ollama_host` | `http://localhost:11434` | Ollama server URL |
-| `models.coordinator` | `qwen2.5:14b-instruct` | Model for reasoning (hypothesis, decompose, integrate) |
-| `models.default` | `qwen2.5-coder:7b` | Fallback model for subagents |
-| `models.embed` | `nomic-embed-text` | Embedding model (768-dim) |
-| `max_subagents` | `4` | Max concurrent subagents per iteration |
-| `subagent_step_cap` | `20` | Max ReAct steps per subagent |
-| `context_token_budget` | `8192` | Token budget for context assembly |
-| `dup_threshold` | `0.92` | Cosine similarity cutoff for duplicate-failure detection |
-| `data_dir` | `./data` | Where episodic, semantic, and state storage lives |
-| `github_branch_prefix` | `auto-researcher` | Branch prefix for saved improvements |
-| `protected_patterns` | `tests/`, `test_*.py`, … | Files the agent is never allowed to modify |
-
-See [docs/08_configuration.md](docs/08_configuration.md) for a full reference of every key.
+1. Set `target_repo` in `config.yaml` to the absolute path of the repo you want to improve
+2. Edit `user_tools/test.py` to implement your scoring function (returns a `0.0–1.0` float)
+3. Run `uv run python main.py` and open `http://localhost:8000`
+4. Click **Start** — the agent runs until you click **Stop**
 
 ## Repository Layout
 
@@ -153,7 +76,6 @@ auto-researcher/
 │   ├── subagent.py          — ReAct executor (runs in a git worktree)
 │   └── context.py           — bounded context assembly per step
 ├── memory/
-│   ├── __init__.py          — Memory façade
 │   ├── episodic.py          — SQLite append-only iteration log
 │   ├── semantic.py          — LanceDB vector store (RAG + dup detection)
 │   └── state.py             — SQLite single-row resume state
@@ -176,8 +98,7 @@ auto-researcher/
 │   └── sample_action.py     — sample action tool (shell command)
 ├── dashboard/
 │   └── index.html           — live monitoring dashboard
-├── tests/                   — unit tests
-└── docs/                    — contributor documentation (chapters 0–9)
+└── tests/                   — unit tests
 ```
 
 ## Extending the Agent
@@ -212,7 +133,7 @@ Then `ollama pull sqlcoder:7b` and restart. The coordinator will route SQL subta
 
 ### Replace the test oracle
 
-Edit `user_tools/test.py`. Return `{"score": float, "remark": str}`. The agent maximizes the score. See [docs/09_contributing.md](docs/09_contributing.md) for multi-metric scoring examples.
+Edit `user_tools/test.py`. Return `{"score": float, "remark": str}`. The agent maximizes the score.
 
 ## Dashboard
 
@@ -226,26 +147,9 @@ The dashboard at `http://localhost:8000` shows:
 
 ## Memory and Resume
 
-All state is persisted under `data_dir` (default `./data`). If the process is killed, restart with `python main.py` and click **Start** — the agent resumes from the last completed iteration and the last saved baseline score.
+All state is persisted under `data_dir` (default `./data`). If the process is killed, restart with `uv run python main.py` and click **Start** — the agent resumes from the last completed iteration and saved baseline score.
 
 To start completely fresh: `rm -rf ./data`
-
-## Documentation
-
-The `docs/` folder contains a detailed chapter-by-chapter walkthrough for contributors:
-
-| Chapter | Topic |
-|---------|-------|
-| [00 — Overview](docs/00_overview.md) | System design, loop diagram, reading order |
-| [01 — Shared Types](docs/01_shared_types.md) | All dataclasses and enums |
-| [02 — Memory](docs/02_memory.md) | Three storage layers, cosine similarity, resume |
-| [03 — Models](docs/03_models.md) | Registry, routing algorithm, Ollama client |
-| [04 — Tools](docs/04_tools.md) | @tool decorator, sandbox, validator, save |
-| [05 — Subagent](docs/05_subagent.md) | ReAct loop, worktree isolation, context assembly |
-| [06 — Coordinator](docs/06_coordinator.md) | Infinite loop, decomposition, integration |
-| [07 — Server & Dashboard](docs/07_server_dashboard.md) | REST API, WebSocket events, dashboard JS |
-| [08 — Configuration](docs/08_configuration.md) | Every config key explained |
-| [09 — Contributing](docs/09_contributing.md) | How to extend the system |
 
 ## License
 
