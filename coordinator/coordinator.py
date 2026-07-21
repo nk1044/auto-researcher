@@ -656,9 +656,13 @@ class Coordinator:
         logger.info("Coordinator shut down cleanly at iteration %d", self.state.iteration)
 
     def _task_spec(self) -> str:
+        goal = self.config.get(
+            "goal",
+            "Continuously improve the codebase's test pass-rate score.",
+        )
         return (
             f"Target repository: {self.repo_path}\n"
-            f"Goal: Continuously improve the codebase's test pass-rate score.\n"
+            f"Goal: {goal}\n"
             f"Constraints:\n"
             f"  - Do not modify test files or held-out evaluation data.\n"
             f"  - All changes must pass the test oracle.\n"

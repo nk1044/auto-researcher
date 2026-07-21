@@ -1,27 +1,32 @@
 ollama_host: "http://localhost:11434"
 
 models:
-  coordinator: "lazarevtill/Skywork-OR1-32B-Preview:latest"
-  default: "lazarevtill/Skywork-OR1-32B-Preview:latest"
+  coordinator: "magistral:24b"
+  default: "magistral:24b"
   embed: "nomic-embed-text"
 
   workers:
-    - name: "devstral-small-2:24b"
+    - name: "devstral-small-2:24b" 
       skills: [
         "code", "debug", "refactor", "architecture", "review", "test", "implementation", "optimization"
       ]
       options:
         temperature: 0.1
 
-    - name: "lazarevtill/Skywork-OR1-32B-Preview:latest"
+    - name: "magistral:24b"
       skills: [
         "reasoning", "planning", "analysis", "math", "proof", "verification", "decomposition", "synthesis"
       ]
       options:
         temperature: 0.3
 
+# === Goal ===
+# Describe in plain English what you want the AI to improve.
+# Be specific — mention problem types, quality bar, or constraints you care about.
+goal: "Improve the DSA solutions in this repository — better time/space complexity, cleaner code, and more correct edge-case handling."
+
 # === Target ===
-target_repo: "/path/to/your/repo"          # REQUIRED: absolute path to the repo under improvement
+target_repo: "/Users/neerajkumar/vscode/dsa"          # REQUIRED: absolute path to the repo under improvement
 worktree_root: "/tmp/auto-researcher/worktrees"
 github_remote: "origin"
 github_branch_prefix: "auto-researcher"
@@ -57,7 +62,7 @@ sandbox:
   timeout_seconds: 300
 
 # === Persistence ===
-data_dir: "./data"   # episodic.db, state.db, semantic_db/ will be created here
+data_dir: "./volumes/data"   # episodic.db, state.db, semantic_db/ will be created here
 
 # === Server ===
 server:

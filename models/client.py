@@ -75,6 +75,11 @@ class OllamaClient:
 
         logger.debug("OllamaClient.chat model=%s", model_spec.name)
         response = await self._client.post("/api/chat", json=body)
+        if response.is_error:
+            logger.error(
+                "Ollama /api/chat returned %s for model=%s: %s",
+                response.status_code, model_spec.name, response.text[:600],
+            )
         response.raise_for_status()
         data = response.json()
 

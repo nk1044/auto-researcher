@@ -70,6 +70,14 @@ class ModelRegistry:
 
         available: set[str] = {m["name"] for m in data.get("models", [])}
 
+        def _is_available(name: str) -> bool:
+            if name in available:
+                return True
+            # Treat untagged name as equivalent to name:latest
+            if ":" not in name:
+                return f"{name}:latest" in available
+            return False
+
         required: dict[str, str] = {
             "models.coordinator": self._coordinator.name,
             "models.default": self._default.name,
@@ -80,7 +88,7 @@ class ModelRegistry:
 
         missing: list[str] = []
         for config_key, name in required.items():
-            if name not in available:
+            if not _is_available(name):
                 missing.append(f"  {config_key}: '{name}'  →  ollama pull {name}")
 
         if missing:
