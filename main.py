@@ -142,12 +142,13 @@ async def startup(config: dict[str, Any]) -> None:
     from tools.builtin.shell import run_shell
     from tools.builtin.search import search_files, find_files
     from tools.builtin.web import web_fetch, web_search
+    from tools.builtin.notify import send_discord
 
     tools = ToolRuntime(config)
 
     # Built-in tools (always registered)
     for fn in [read_file, write_file, edit_file, list_files, delete_file, create_dir,
-               run_shell, search_files, find_files, web_fetch, web_search]:
+               run_shell, search_files, find_files, web_fetch, web_search, send_discord]:
         tools.register(fn)
 
     # Built-in save tool (coordinator-only)
@@ -156,8 +157,13 @@ async def startup(config: dict[str, Any]) -> None:
     # User-defined tools (test oracle + custom actions from user_tools/)
     tools.auto_discover("user_tools")
 
-    # Wire up permission handler
+    # Wire up permission handler + Discord notifications
     from server import permissions as perm_module
+    notif_cfg = config.get("notifications", {})
+    perm_module.configure(
+        webhook_url=notif_cfg.get("discord_webhook_url", ""),
+        dashboard_url=notif_cfg.get("dashboard_url", "http://localhost:8000"),
+    )
     tools.set_permission_handler(perm_module.request)
 
     logger.info("Registered tools: %s", list(tools._tools.keys()))

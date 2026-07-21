@@ -440,7 +440,7 @@
     <div class="perm-reason" id="perm-reason"></div>
     <div class="perm-command" id="perm-command"></div>
     <div class="perm-agent" id="perm-agent"></div>
-    <div class="perm-timer">Auto-denying in <span id="perm-countdown">120</span>s</div>
+    <div class="perm-timer">Auto-denying in <span id="perm-countdown">180</span>s</div>
     <div class="perm-actions">
       <button class="btn-deny"    onclick="respondPermission(false)">Deny</button>
       <button class="btn-approve" onclick="respondPermission(true)">Approve</button>
@@ -777,6 +777,7 @@
     reward_hack_rejected:'dot-red', loop_started:'dot-blue',
     paused:'dot-yellow',          resumed:'dot-green', shutdown:'dot-red',
     permission_request:'dot-yellow', permission_granted:'dot-green', permission_denied:'dot-red',
+    subagent_step:'dot-teal',
   };
 
   function logEvent(evt) {

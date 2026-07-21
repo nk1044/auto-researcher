@@ -65,6 +65,21 @@ server:
   host: "0.0.0.0"
   port: 8000
 
+# === Notifications ===
+# Discord webhook for permission requests and agent alerts.
+#
+# Setup (2 minutes):
+#   1. Open Discord → go to the channel you want notifications in
+#   2. Click the gear icon (Edit Channel) → Integrations → Webhooks → New Webhook
+#   3. Give it a name like "Auto-Researcher", click "Copy Webhook URL"
+#   4. Paste the URL below (replace the placeholder)
+#
+# Leave discord_webhook_url empty to disable Discord notifications.
+#
+notifications:
+  discord_webhook_url: ""     # paste your webhook URL here
+  dashboard_url: "http://localhost:8000"   # shown in notifications so you know where to go
+
 # === Reward-hacking safeguards ===
 protected_patterns:
   - "tests/"
