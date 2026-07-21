@@ -26,6 +26,8 @@ build/
 coverage.xml
 htmlcov/
 
+data/
+
 # Type checking / linting caches
 .mypy_cache/
 .ruff_cache/
@@ -45,8 +47,3 @@ Thumbs.db
 .env.local
 *.local
 
-# Docker persistent volumes (keep dirs, ignore contents)
-volumes/ollama/*
-volumes/data/*
-!volumes/ollama/.gitkeep
-!volumes/data/.gitkeep

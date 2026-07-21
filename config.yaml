@@ -62,7 +62,7 @@ sandbox:
   timeout_seconds: 300
 
 # === Persistence ===
-data_dir: "./volumes/data"   # episodic.db, state.db, semantic_db/ will be created here
+data_dir: "./data"   # episodic.db, state.db, semantic_db/ will be created here
 
 # === Server ===
 server:
