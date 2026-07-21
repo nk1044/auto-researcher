@@ -3,229 +3,475 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Auto-Researcher Dashboard</title>
+  <title>Auto-Researcher</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg: #0f1117;
-      --surface: #1a1d27;
-      --border: #2a2d3d;
-      --text: #e2e8f0;
-      --muted: #718096;
-      --green: #48bb78;
-      --red: #fc8181;
-      --yellow: #f6e05e;
-      --blue: #63b3ed;
-      --purple: #b794f4;
-      --accent: #4299e1;
-      --win: #276749;
-      --mistake: #822727;
+      --bg:        #08080d;
+      --s0:        #0c0c14;
+      --s1:        #111120;
+      --s2:        #16162a;
+      --border:    #1c1c30;
+      --border2:   #252540;
+      --text:      #ddddf0;
+      --text2:     #8888aa;
+      --text3:     #44445a;
+
+      --green:  #3dd68c;
+      --red:    #f25f5c;
+      --yellow: #f0b429;
+      --blue:   #5b7cf6;
+      --purple: #a78bfa;
+      --teal:   #22d3ee;
+
+      --green-a:  rgba(61,214,140,0.1);
+      --red-a:    rgba(242,95,92,0.1);
+      --yellow-a: rgba(240,180,41,0.1);
+      --blue-a:   rgba(91,124,246,0.1);
+      --purple-a: rgba(167,139,250,0.1);
     }
 
-    body { background: var(--bg); color: var(--text); font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; min-height: 100vh; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
 
+    /* ── Header ─────────────────────────────────────────────── */
     header {
-      background: var(--surface);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(8,8,13,0.88);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
       border-bottom: 1px solid var(--border);
-      padding: 12px 20px;
+      height: 54px;
+      padding: 0 24px;
       display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 14px;
     }
-    header h1 { font-size: 16px; font-weight: 600; color: var(--blue); flex: 1; }
-    .status-pill {
-      padding: 3px 10px;
-      border-radius: 12px;
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-    .status-pill.running { background: #1a472a; color: var(--green); }
-    .status-pill.stopped { background: #3d1c1c; color: var(--red); }
-    .status-pill.paused  { background: #3d3600; color: var(--yellow); }
 
-    .controls { display: flex; gap: 8px; }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 1;
+      min-width: 0;
+    }
+    .logo-mark {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, var(--blue) 0%, var(--purple) 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      font-weight: 700;
+      color: #fff;
+      flex-shrink: 0;
+      box-shadow: 0 0 16px rgba(91,124,246,0.3);
+    }
+    .logo-name {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text);
+      letter-spacing: -0.02em;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+      border: 1px solid transparent;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .status-pill.running  { background: var(--green-a);  color: var(--green);  border-color: rgba(61,214,140,0.25); }
+    .status-pill.stopped  { background: var(--red-a);    color: var(--red);    border-color: rgba(242,95,92,0.25); }
+    .status-pill.paused   { background: var(--yellow-a); color: var(--yellow); border-color: rgba(240,180,41,0.25); }
+    .status-pill.running .status-dot  { background: var(--green);  animation: blink 1.6s ease-in-out infinite; }
+    .status-pill.stopped .status-dot  { background: var(--red); }
+    .status-pill.paused .status-dot   { background: var(--yellow); }
+
+    @keyframes blink {
+      0%,100% { opacity: 1; box-shadow: 0 0 0 0 rgba(61,214,140,0.5); }
+      50%      { opacity: 0.7; box-shadow: 0 0 0 5px rgba(61,214,140,0); }
+    }
+
+    #connection-status {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text3);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      flex-shrink: 0;
+    }
+    #connection-status::before {
+      content: '';
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    #connection-status.connected    { color: var(--green); }
+    #connection-status.disconnected { color: var(--red); }
+
+    .controls { display: flex; gap: 6px; flex-shrink: 0; }
     button {
-      border: none;
-      border-radius: 6px;
-      padding: 6px 14px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      padding: 6px 13px;
       font-size: 12px;
       font-family: inherit;
+      font-weight: 500;
       cursor: pointer;
-      font-weight: 600;
-      transition: opacity 0.15s;
+      transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+      line-height: 1;
+      white-space: nowrap;
     }
-    button:hover { opacity: 0.85; }
-    button:disabled { opacity: 0.4; cursor: not-allowed; }
-    .btn-start  { background: #276749; color: #fff; }
-    .btn-stop   { background: #822727; color: #fff; }
-    .btn-pause  { background: #5c4b00; color: var(--yellow); }
-    .btn-resume { background: #1a4a6e; color: var(--blue); }
+    button:disabled { opacity: 0.3; cursor: not-allowed; }
+    .btn-start  { background: var(--green-a);  color: var(--green);  border-color: rgba(61,214,140,0.2); }
+    .btn-stop   { background: var(--red-a);    color: var(--red);    border-color: rgba(242,95,92,0.2); }
+    .btn-pause  { background: var(--yellow-a); color: var(--yellow); border-color: rgba(240,180,41,0.2); }
+    .btn-resume { background: var(--blue-a);   color: var(--blue);   border-color: rgba(91,124,246,0.2); }
+    .btn-start:hover:not(:disabled)  { background: rgba(61,214,140,0.16); border-color: rgba(61,214,140,0.45); }
+    .btn-stop:hover:not(:disabled)   { background: rgba(242,95,92,0.16);  border-color: rgba(242,95,92,0.45); }
+    .btn-pause:hover:not(:disabled)  { background: rgba(240,180,41,0.16); border-color: rgba(240,180,41,0.45); }
+    .btn-resume:hover:not(:disabled) { background: rgba(91,124,246,0.16); border-color: rgba(91,124,246,0.45); }
 
-    .main { display: grid; grid-template-columns: 1fr 340px; gap: 16px; padding: 16px; height: calc(100vh - 57px); overflow: hidden; }
+    /* ── Layout ─────────────────────────────────────────────── */
+    .main {
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      height: calc(100vh - 54px);
+      overflow: hidden;
+    }
 
-    .left-col { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
-    .right-col { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+    .left-col {
+      padding: 20px 20px 20px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      overflow-y: auto;
+      border-right: 1px solid var(--border);
+    }
+    .left-col::-webkit-scrollbar { width: 4px; }
+    .left-col::-webkit-scrollbar-track { background: transparent; }
+    .left-col::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
 
-    .card {
-      background: var(--surface);
+    /* ── Stat boxes ──────────────────────────────────────────── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+    }
+    .stat-box {
+      background: var(--s1);
       border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px 14px;
+      border-radius: 12px;
+      padding: 14px 16px;
+      transition: border-color 0.2s;
+    }
+    .stat-box:hover { border-color: var(--border2); }
+    .stat-label {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text3);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }
+    .stat-value {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -0.02em;
+      line-height: 1;
+    }
+    .stat-mono {
+      font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', monospace;
+      font-size: 15px;
+    }
+    .outcome-win     { color: var(--green) !important; }
+    .outcome-mistake { color: var(--red)   !important; }
+
+    /* ── Card ────────────────────────────────────────────────── */
+    .card {
+      background: var(--s1);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .card-head {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
     }
     .card-title {
       font-size: 11px;
+      font-weight: 600;
+      color: var(--text2);
       text-transform: uppercase;
       letter-spacing: 0.08em;
-      color: var(--muted);
-      margin-bottom: 8px;
-      font-weight: 600;
     }
+    .card-meta {
+      font-size: 11px;
+      color: var(--text3);
+    }
+    .card-body { padding: 16px; }
 
+    /* ── Hypothesis ──────────────────────────────────────────── */
     #hypothesis-text {
       font-size: 14px;
-      line-height: 1.6;
+      line-height: 1.65;
       color: var(--text);
-      min-height: 40px;
     }
     #hypothesis-rationale {
       font-size: 12px;
-      color: var(--muted);
-      margin-top: 6px;
+      color: var(--text3);
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid var(--border);
       font-style: italic;
+      display: none;
     }
+    #hypothesis-rationale.visible { display: block; }
 
+    /* ── Chart ───────────────────────────────────────────────── */
+    #score-chart { width: 100%; height: 100px; display: block; }
+
+    /* ── Subagents ───────────────────────────────────────────── */
     .subagent-grid { display: flex; flex-direction: column; gap: 8px; }
 
     .subagent-panel {
-      background: var(--bg);
+      background: var(--s0);
       border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 10px 12px;
+      border-left: 3px solid var(--border2);
+      border-radius: 8px;
+      padding: 12px 14px;
     }
-    .subagent-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
-    .subagent-id { font-size: 11px; color: var(--muted); }
-    .model-tag {
-      font-size: 10px;
-      padding: 2px 7px;
-      border-radius: 10px;
-      background: #1a2d4a;
-      color: var(--blue);
-    }
-    .fallback-tag {
-      font-size: 10px;
-      padding: 2px 7px;
-      border-radius: 10px;
-      background: #2d1a2d;
-      color: var(--purple);
-    }
-    .skill-tag {
-      font-size: 10px;
-      padding: 2px 7px;
-      border-radius: 10px;
-      background: #1a3520;
-      color: var(--green);
-    }
-    .subagent-goal { font-size: 12px; color: var(--text); margin-bottom: 4px; }
-    .subagent-status { font-size: 11px; }
-    .subagent-status.spawned  { color: var(--blue); }
-    .subagent-status.progress { color: var(--yellow); }
-    .subagent-status.success  { color: var(--green); }
-    .subagent-status.failed   { color: var(--red); }
-    .diff-preview {
-      font-size: 10px;
-      color: var(--muted);
-      max-height: 80px;
-      overflow: hidden;
-      margin-top: 4px;
-      white-space: pre-wrap;
-      word-break: break-all;
-    }
+    .subagent-panel.spawned  { border-left-color: var(--blue); }
+    .subagent-panel.progress { border-left-color: var(--yellow); }
+    .subagent-panel.success  { border-left-color: var(--green); }
+    .subagent-panel.failed   { border-left-color: var(--red); }
 
-    .integration-panel .label { color: var(--muted); font-size: 11px; }
-    .integration-panel .value { color: var(--text); font-size: 12px; margin-top: 2px; }
-
-    /* Score chart */
-    #score-chart { width: 100%; height: 80px; }
-    .score-value { font-size: 28px; font-weight: 700; color: var(--green); }
-    .score-remark { font-size: 12px; color: var(--muted); margin-top: 4px; }
-    .score-baseline { font-size: 11px; color: var(--muted); }
-
-    /* Memory/timeline log */
-    #event-log {
+    .subagent-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+    .subagent-id {
+      font-size: 10px;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      color: var(--text3);
+      background: var(--s2);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .tag {
       font-size: 11px;
-      max-height: 280px;
-      overflow-y: auto;
+      font-weight: 500;
+      padding: 2px 8px;
+      border-radius: 5px;
+    }
+    .model-tag    { background: rgba(91,124,246,0.12);  color: var(--blue); }
+    .fallback-tag { background: rgba(167,139,250,0.12); color: var(--purple); }
+    .skill-tag    { background: rgba(61,214,140,0.1);   color: var(--green); }
+
+    .subagent-goal {
+      font-size: 13px;
+      color: var(--text);
+      line-height: 1.4;
+      margin-bottom: 6px;
+    }
+    .subagent-status {
+      font-size: 11px;
+      font-weight: 500;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .subagent-status::before {
+      content: '';
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .subagent-status.spawned::before  { background: var(--blue); }
+    .subagent-status.spawned          { color: var(--blue); }
+    .subagent-status.progress::before { background: var(--yellow); animation: blink 1.2s ease-in-out infinite; }
+    .subagent-status.progress         { color: var(--yellow); }
+    .subagent-status.success::before  { background: var(--green); }
+    .subagent-status.success          { color: var(--green); }
+    .subagent-status.failed::before   { background: var(--red); }
+    .subagent-status.failed           { color: var(--red); }
+    .subagent-files {
+      font-size: 10px;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      color: var(--text3);
+      margin-top: 5px;
+    }
+
+    .empty-state { font-size: 13px; color: var(--text3); padding: 4px 0; }
+
+    /* ── Integration ─────────────────────────────────────────── */
+    .integ-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .integ-label {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text3);
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      margin-bottom: 5px;
+    }
+    .integ-value { font-size: 13px; color: var(--text2); line-height: 1.4; }
+
+    /* ── Event log ───────────────────────────────────────────── */
+    .right-col {
       display: flex;
       flex-direction: column;
-      gap: 3px;
+      overflow: hidden;
+      background: var(--s0);
     }
+    .log-head {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+    .log-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text2);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .log-count { font-size: 11px; color: var(--text3); }
+
+    #event-log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px 0;
+    }
+    #event-log::-webkit-scrollbar { width: 3px; }
+    #event-log::-webkit-scrollbar-track { background: transparent; }
+    #event-log::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
     .log-entry {
       display: flex;
-      gap: 8px;
-      align-items: baseline;
-      padding: 2px 0;
-      border-bottom: 1px solid #1e2030;
+      align-items: flex-start;
+      gap: 0;
+      padding: 5px 14px;
+      border-left: 2px solid transparent;
+      transition: background 0.1s;
+      cursor: default;
     }
-    .log-ts { color: var(--muted); flex-shrink: 0; font-size: 10px; }
-    .log-type { flex-shrink: 0; min-width: 120px; }
-    .log-data { color: var(--muted); word-break: break-all; }
-
-    .log-type.hypothesis_formed  { color: var(--blue); }
-    .log-type.dup_rejected        { color: var(--yellow); }
-    .log-type.decomposed          { color: var(--purple); }
-    .log-type.model_routed        { color: #81e6d9; }
-    .log-type.subagent_spawned    { color: var(--blue); }
-    .log-type.subagent_done       { color: var(--green); }
-    .log-type.test_scored         { color: var(--yellow); }
-    .log-type.saved               { color: var(--green); font-weight: 700; }
-    .log-type.error               { color: var(--red); }
-    .log-type.reward_hack_rejected{ color: var(--red); font-weight: 700; }
-
-    /* Stats row */
-    .stats-row { display: flex; gap: 12px; }
-    .stat-box {
-      flex: 1;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 8px 10px;
-      text-align: center;
+    .log-entry:hover { background: rgba(255,255,255,0.02); }
+    .log-entry.is-saved {
+      border-left-color: var(--green);
+      background: rgba(61,214,140,0.04);
     }
-    .stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; }
-    .stat-value { font-size: 18px; font-weight: 700; color: var(--text); margin-top: 2px; }
 
-    .outcome-win     { color: var(--green); }
-    .outcome-mistake { color: var(--red); }
+    .log-ts {
+      font-size: 10px;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      color: var(--text3);
+      flex-shrink: 0;
+      width: 56px;
+      padding-top: 2px;
+    }
+    .log-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      margin-right: 9px;
+      margin-top: 4px;
+      background: var(--text3);
+    }
+    .log-body { flex: 1; min-width: 0; }
+    .log-name {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text2);
+      line-height: 1.3;
+    }
+    .log-detail {
+      font-size: 11px;
+      color: var(--text3);
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 1px;
+    }
 
-    canvas { display: block; }
-
-    #connection-status { font-size: 11px; padding: 2px 8px; border-radius: 10px; }
-    #connection-status.connected    { background: #1a3520; color: var(--green); }
-    #connection-status.disconnected { background: #3d1c1c; color: var(--red); }
+    /* dot colors by event type */
+    .dot-blue   { background: var(--blue); }
+    .dot-green  { background: var(--green); }
+    .dot-yellow { background: var(--yellow); }
+    .dot-red    { background: var(--red); }
+    .dot-purple { background: var(--purple); }
+    .dot-teal   { background: var(--teal); }
   </style>
 </head>
 <body>
 
 <header>
-  <h1>Auto-Researcher</h1>
-  <span id="status-pill" class="status-pill stopped">stopped</span>
+  <div class="logo">
+    <div class="logo-mark">A</div>
+    <span class="logo-name">Auto-Researcher</span>
+  </div>
+
+  <span id="status-pill" class="status-pill stopped">
+    <span class="status-dot"></span>
+    <span id="status-text">Stopped</span>
+  </span>
+
   <span id="connection-status" class="disconnected">disconnected</span>
+
   <div class="controls">
-    <button class="btn-start" onclick="apiCall('/start')">Start</button>
-    <button class="btn-pause" onclick="apiCall('/pause')">Pause</button>
-    <button class="btn-resume" onclick="apiCall('/resume')">Resume</button>
-    <button class="btn-stop" onclick="apiCall('/stop')">&#9632; STOP</button>
+    <button class="btn-start"  onclick="apiCall('/start')">&#9654; Start</button>
+    <button class="btn-pause"  onclick="apiCall('/pause')">&#9646;&#9646; Pause</button>
+    <button class="btn-resume" onclick="apiCall('/resume')">&#8635; Resume</button>
+    <button class="btn-stop"   onclick="apiCall('/stop')">&#9632; Stop</button>
   </div>
 </header>
 
 <div class="main">
-  <!-- LEFT: main content -->
   <div class="left-col">
 
-    <!-- Stats row -->
     <div class="stats-row">
       <div class="stat-box">
         <div class="stat-label">Iteration</div>
@@ -233,77 +479,95 @@
       </div>
       <div class="stat-box">
         <div class="stat-label">Baseline</div>
-        <div class="stat-value" id="stat-baseline">0.000</div>
+        <div class="stat-value stat-mono" id="stat-baseline">0.0000</div>
       </div>
       <div class="stat-box">
         <div class="stat-label">Last Score</div>
-        <div class="stat-value" id="stat-last-score">—</div>
+        <div class="stat-value stat-mono" id="stat-last-score">—</div>
       </div>
       <div class="stat-box">
         <div class="stat-label">Commit</div>
-        <div class="stat-value" style="font-size:12px" id="stat-commit">—</div>
+        <div class="stat-value stat-mono" style="font-size:13px" id="stat-commit">—</div>
       </div>
     </div>
 
-    <!-- Hypothesis -->
     <div class="card">
-      <div class="card-title">Current Hypothesis</div>
-      <div id="hypothesis-text">Waiting for first iteration...</div>
-      <div id="hypothesis-rationale"></div>
-    </div>
-
-    <!-- Score chart -->
-    <div class="card">
-      <div class="card-title">Score Over Iterations</div>
-      <canvas id="score-chart"></canvas>
-    </div>
-
-    <!-- Subagents -->
-    <div class="card">
-      <div class="card-title">Subagents — Current Iteration</div>
-      <div class="subagent-grid" id="subagent-grid">
-        <div style="color:var(--muted);font-size:12px">No subagents yet.</div>
+      <div class="card-head">
+        <span class="card-title">Current Hypothesis</span>
+      </div>
+      <div class="card-body">
+        <div id="hypothesis-text">Waiting for first iteration…</div>
+        <div id="hypothesis-rationale"></div>
       </div>
     </div>
 
-    <!-- Integration -->
-    <div class="card integration-panel">
-      <div class="card-title">Integration / Review</div>
-      <div class="label">Summary</div>
-      <div class="value" id="integration-summary">—</div>
-      <div class="label" style="margin-top:8px">Files Touched</div>
-      <div class="value" id="integration-files">—</div>
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">Score History</span>
+        <span class="card-meta" id="chart-label"></span>
+      </div>
+      <div class="card-body" style="padding: 12px 16px 14px">
+        <canvas id="score-chart"></canvas>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">Subagents</span>
+        <span class="card-meta" id="subagent-count">current iteration</span>
+      </div>
+      <div class="card-body">
+        <div class="subagent-grid" id="subagent-grid">
+          <div class="empty-state">No active subagents</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">Integration</span>
+      </div>
+      <div class="card-body">
+        <div class="integ-row">
+          <div>
+            <div class="integ-label">Summary</div>
+            <div class="integ-value" id="integration-summary">—</div>
+          </div>
+          <div>
+            <div class="integ-label">Files Touched</div>
+            <div class="integ-value" id="integration-files">—</div>
+          </div>
+        </div>
+      </div>
     </div>
 
   </div>
 
-  <!-- RIGHT: event log -->
   <div class="right-col">
-    <div class="card" style="flex:1">
-      <div class="card-title">Event Log</div>
-      <div id="event-log"></div>
+    <div class="log-head">
+      <span class="log-title">Event Log</span>
+      <span class="log-count" id="log-count">0 events</span>
     </div>
+    <div id="event-log"></div>
   </div>
 </div>
 
 <script>
-  // ── State ────────────────────────────────────────────────────────────────────
-  const scores = [];
-  const subagents = {};    // id -> panel data
-  let ws = null;
-  let wsRetryDelay = 1000;
+  const scores   = [];
+  const subagents = {};
+  let ws = null, wsRetryDelay = 1000, logCount = 0;
 
-  // ── WebSocket ────────────────────────────────────────────────────────────────
+  // ── WebSocket ───────────────────────────────────────────────
   function connectWS() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     ws = new WebSocket(`${proto}://${location.host}/events`);
-
-    ws.onopen = () => {
-      setConnStatus(true);
-      wsRetryDelay = 1000;
-      refreshState();
+    ws.onopen  = () => { setConnStatus(true); wsRetryDelay = 1000; refreshState(); };
+    ws.onclose = () => {
+      setConnStatus(false);
+      setTimeout(connectWS, wsRetryDelay);
+      wsRetryDelay = Math.min(wsRetryDelay * 1.5, 15000);
     };
-
+    ws.onerror  = () => ws.close();
     ws.onmessage = (e) => {
       let evt;
       try { evt = JSON.parse(e.data); } catch { return; }
@@ -311,25 +575,17 @@
       handleEvent(evt);
       logEvent(evt);
     };
-
-    ws.onclose = () => {
-      setConnStatus(false);
-      setTimeout(connectWS, wsRetryDelay);
-      wsRetryDelay = Math.min(wsRetryDelay * 1.5, 15000);
-    };
-
-    ws.onerror = () => ws.close();
   }
 
-  function setConnStatus(connected) {
+  function setConnStatus(ok) {
     const el = document.getElementById('connection-status');
-    el.textContent = connected ? 'connected' : 'disconnected';
-    el.className = connected ? 'connected' : 'disconnected';
+    el.textContent = ok ? 'connected' : 'disconnected';
+    el.className   = ok ? 'connected' : 'disconnected';
   }
 
-  // ── Event handler ─────────────────────────────────────────────────────────
+  // ── Event handler ───────────────────────────────────────────
   function handleEvent(evt) {
-    const d = evt.data || {};
+    const d    = evt.data || {};
     const iter = evt.iteration;
 
     switch (evt.type) {
@@ -338,31 +594,28 @@
         setStatus('running');
         break;
 
-      case 'hypothesis_formed':
+      case 'hypothesis_formed': {
         document.getElementById('hypothesis-text').textContent = d.hypothesis || '—';
-        document.getElementById('hypothesis-rationale').textContent = d.rationale ? `Rationale: ${d.rationale}` : '';
-        // Clear subagents for new iteration
+        const rat = document.getElementById('hypothesis-rationale');
+        if (d.rationale) { rat.textContent = d.rationale; rat.classList.add('visible'); }
+        else              { rat.textContent = ''; rat.classList.remove('visible'); }
         Object.keys(subagents).forEach(k => delete subagents[k]);
         renderSubagents();
         document.getElementById('integration-summary').textContent = '—';
-        document.getElementById('integration-files').textContent = '—';
+        document.getElementById('integration-files').textContent   = '—';
         break;
+      }
 
       case 'dup_rejected':
         document.getElementById('hypothesis-text').textContent =
-          `[DUP REJECTED] ${d.hypothesis || ''} — reforming with novelty...`;
+          'Duplicate detected — reforming with novelty boost…';
         break;
 
       case 'subagent_spawned':
         subagents[d.subtask_id] = {
-          id: d.subtask_id,
-          goal: d.goal || '',
-          model: d.model || '',
-          matched_skills: d.matched_skills || [],
-          fallback: d.fallback || false,
-          status: 'spawned',
-          diff: '',
-          files: d.files_touched || [],
+          id: d.subtask_id, goal: d.goal || '', model: d.model || '',
+          matched_skills: d.matched_skills || [], fallback: d.fallback || false,
+          status: 'spawned', files: d.files_touched || [],
         };
         renderSubagents();
         break;
@@ -370,7 +623,7 @@
       case 'subagent_progress':
         if (subagents[d.subtask_id]) {
           subagents[d.subtask_id].status = 'progress';
-          subagents[d.subtask_id].step = d.step;
+          subagents[d.subtask_id].step   = d.step;
           renderSubagents();
         }
         break;
@@ -378,23 +631,25 @@
       case 'subagent_done':
         if (subagents[d.subtask_id]) {
           subagents[d.subtask_id].status = d.status || 'done';
-          subagents[d.subtask_id].files = d.files_touched || [];
+          subagents[d.subtask_id].files  = d.files_touched || [];
           renderSubagents();
         }
         break;
 
       case 'review_integrate':
         document.getElementById('integration-summary').textContent =
-          `diff ${d.diff_len || 0} chars — ${d.hypothesis || ''}`;
+          `${d.diff_len || 0} chars`;
         break;
 
-      case 'test_scored':
-        const scoreEl = document.getElementById('stat-last-score');
-        scoreEl.textContent = (d.score !== undefined) ? d.score.toFixed(4) : '—';
-        scoreEl.className = (d.score > (d.baseline || 0)) ? 'outcome-win' : 'outcome-mistake';
+      case 'test_scored': {
+        const el = document.getElementById('stat-last-score');
+        el.textContent = d.score !== undefined ? d.score.toFixed(4) : '—';
+        el.className   = 'stat-value stat-mono ' +
+          (d.score > (d.baseline || 0) ? 'outcome-win' : 'outcome-mistake');
         scores.push({ iter, score: d.score });
         drawChart();
         break;
+      }
 
       case 'saved':
         document.getElementById('stat-baseline').textContent =
@@ -402,157 +657,194 @@
         break;
 
       case 'memory_recorded':
-        if (iter !== null && iter !== undefined) {
+        if (iter !== null && iter !== undefined)
           document.getElementById('stat-iter').textContent = iter + 1;
-        }
         break;
 
-      case 'shutdown':
-        setStatus('stopped');
-        break;
-
-      case 'paused':
-        setStatus('paused');
-        break;
-
-      case 'resumed':
-        setStatus('running');
-        break;
+      case 'shutdown': setStatus('stopped'); break;
+      case 'paused':   setStatus('paused');  break;
+      case 'resumed':  setStatus('running'); break;
     }
   }
 
-  // ── Subagent panels ───────────────────────────────────────────────────────
+  // ── Subagent panels ─────────────────────────────────────────
   function renderSubagents() {
-    const grid = document.getElementById('subagent-grid');
+    const grid    = document.getElementById('subagent-grid');
     const entries = Object.values(subagents);
+    document.getElementById('subagent-count').textContent =
+      entries.length ? `${entries.length} agent${entries.length > 1 ? 's' : ''}` : 'current iteration';
+
     if (!entries.length) {
-      grid.innerHTML = '<div style="color:var(--muted);font-size:12px">No subagents yet.</div>';
+      grid.innerHTML = '<div class="empty-state">No active subagents</div>';
       return;
     }
+
     grid.innerHTML = entries.map(s => {
-      const statusClass = { spawned: 'spawned', progress: 'progress', success: 'success', failed: 'failed' }[s.status] || 'progress';
+      const label = { spawned: 'Spawned', progress: `Step ${s.step ?? '…'}`,
+                      success: 'Success', failed: 'Failed' }[s.status] || s.status;
       const modelTag = s.fallback
-        ? `<span class="fallback-tag">${esc(s.model)} (default fallback)</span>`
-        : `<span class="model-tag">${esc(s.model)}</span>`;
-      const skillTags = (s.matched_skills || []).map(sk => `<span class="skill-tag">${esc(sk)}</span>`).join(' ');
-      const step = s.step !== undefined ? ` — step ${s.step}` : '';
+        ? `<span class="tag fallback-tag">${esc(s.model)} · fallback</span>`
+        : `<span class="tag model-tag">${esc(s.model)}</span>`;
+      const skills = (s.matched_skills || [])
+        .map(sk => `<span class="tag skill-tag">${esc(sk)}</span>`).join('');
+      const files = s.files.length
+        ? `<div class="subagent-files">${s.files.map(esc).join(' · ')}</div>` : '';
       return `
-        <div class="subagent-panel">
+        <div class="subagent-panel ${s.status}">
           <div class="subagent-header">
             <span class="subagent-id">${esc(s.id.slice(0,8))}</span>
-            ${modelTag}
-            ${skillTags}
+            ${modelTag}${skills}
           </div>
           <div class="subagent-goal">${esc(s.goal)}</div>
-          <div class="subagent-status ${statusClass}">${esc(s.status)}${step}</div>
-          ${s.files.length ? `<div style="font-size:10px;color:var(--muted);margin-top:3px">${s.files.map(esc).join(', ')}</div>` : ''}
+          <div class="subagent-status ${s.status}">${label}</div>
+          ${files}
         </div>`;
     }).join('');
   }
 
-  // ── Score chart ───────────────────────────────────────────────────────────
+  // ── Score chart ─────────────────────────────────────────────
   function drawChart() {
     const canvas = document.getElementById('score-chart');
-    const ctx = canvas.getContext('2d');
-    canvas.width = canvas.offsetWidth;
-    canvas.height = 80;
+    const ctx    = canvas.getContext('2d');
+    canvas.width  = canvas.offsetWidth;
+    canvas.height = 100;
     const W = canvas.width, H = canvas.height;
     ctx.clearRect(0, 0, W, H);
 
     if (scores.length < 2) {
-      ctx.fillStyle = '#4a5568';
-      ctx.font = '11px monospace';
-      ctx.fillText('Waiting for data...', 10, H / 2);
+      ctx.fillStyle  = '#2a2a42';
+      ctx.font       = '12px Inter, sans-serif';
+      ctx.textAlign  = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('Waiting for data…', W / 2, H / 2);
       return;
     }
 
     const vals = scores.map(s => s.score);
     const minV = Math.min(...vals);
     const maxV = Math.max(...vals, minV + 0.001);
-    const pad = { t: 8, b: 8, l: 8, r: 8 };
-    const iW = W - pad.l - pad.r;
-    const iH = H - pad.t - pad.b;
+    const pad  = { t: 8, b: 8, l: 4, r: 4 };
+    const iW   = W - pad.l - pad.r;
+    const iH   = H - pad.t - pad.b;
 
-    const x = (i) => pad.l + (i / (scores.length - 1)) * iW;
-    const y = (v) => pad.t + (1 - (v - minV) / (maxV - minV)) * iH;
+    const px = i => pad.l + (i / (scores.length - 1)) * iW;
+    const py = v => pad.t + (1 - (v - minV) / (maxV - minV)) * iH;
 
-    // Grid line at max
-    ctx.strokeStyle = '#2d3748';
+    // Subtle grid lines
+    ctx.setLineDash([2, 5]);
     ctx.lineWidth = 1;
-    ctx.setLineDash([3, 3]);
-    ctx.beginPath();
-    ctx.moveTo(pad.l, pad.t);
-    ctx.lineTo(pad.l + iW, pad.t);
-    ctx.stroke();
+    for (let i = 0; i <= 3; i++) {
+      const yy = pad.t + (i / 3) * iH;
+      ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+      ctx.beginPath(); ctx.moveTo(pad.l, yy); ctx.lineTo(pad.l + iW, yy); ctx.stroke();
+    }
     ctx.setLineDash([]);
 
     // Area fill
-    const grad = ctx.createLinearGradient(0, pad.t, 0, H - pad.b);
-    grad.addColorStop(0, 'rgba(72,187,120,0.3)');
-    grad.addColorStop(1, 'rgba(72,187,120,0.0)');
+    const grad = ctx.createLinearGradient(0, pad.t, 0, H);
+    grad.addColorStop(0, 'rgba(61,214,140,0.18)');
+    grad.addColorStop(1, 'rgba(61,214,140,0.0)');
     ctx.beginPath();
-    ctx.moveTo(x(0), y(vals[0]));
-    for (let i = 1; i < scores.length; i++) ctx.lineTo(x(i), y(vals[i]));
-    ctx.lineTo(x(scores.length - 1), H - pad.b);
-    ctx.lineTo(x(0), H - pad.b);
+    ctx.moveTo(px(0), py(vals[0]));
+    for (let i = 1; i < scores.length; i++) ctx.lineTo(px(i), py(vals[i]));
+    ctx.lineTo(px(scores.length - 1), H - pad.b);
+    ctx.lineTo(px(0), H - pad.b);
     ctx.closePath();
     ctx.fillStyle = grad;
     ctx.fill();
 
-    // Line
+    // Line with glow
+    ctx.shadowColor = 'rgba(61,214,140,0.45)';
+    ctx.shadowBlur  = 7;
     ctx.beginPath();
-    ctx.moveTo(x(0), y(vals[0]));
-    for (let i = 1; i < scores.length; i++) ctx.lineTo(x(i), y(vals[i]));
-    ctx.strokeStyle = '#48bb78';
-    ctx.lineWidth = 2;
+    ctx.moveTo(px(0), py(vals[0]));
+    for (let i = 1; i < scores.length; i++) ctx.lineTo(px(i), py(vals[i]));
+    ctx.strokeStyle = '#3dd68c';
+    ctx.lineWidth   = 2;
     ctx.stroke();
+    ctx.shadowBlur  = 0;
 
-    // Last dot
-    const lastX = x(scores.length - 1), lastY = y(vals[vals.length - 1]);
+    // Terminal dot
+    const lx = px(scores.length - 1), ly = py(vals[vals.length - 1]);
+    ctx.shadowColor = 'rgba(61,214,140,0.7)';
+    ctx.shadowBlur  = 10;
     ctx.beginPath();
-    ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
-    ctx.fillStyle = '#48bb78';
+    ctx.arc(lx, ly, 4, 0, Math.PI * 2);
+    ctx.fillStyle = '#3dd68c';
     ctx.fill();
+    ctx.shadowBlur = 0;
+
+    document.getElementById('chart-label').textContent =
+      `latest: ${vals[vals.length - 1].toFixed(4)}`;
   }
 
-  // ── Event log ─────────────────────────────────────────────────────────────
+  // ── Event log ───────────────────────────────────────────────
+  const DOT_COLOR = {
+    hypothesis_formed: 'dot-blue',  dup_rejected: 'dot-yellow',
+    decomposed: 'dot-purple',       model_routed: 'dot-teal',
+    subagent_spawned: 'dot-blue',   subagent_progress: 'dot-yellow',
+    subagent_done: 'dot-green',     test_scored: 'dot-yellow',
+    saved: 'dot-green',             error: 'dot-red',
+    reward_hack_rejected: 'dot-red',loop_started: 'dot-blue',
+    paused: 'dot-yellow',           resumed: 'dot-green',
+    shutdown: 'dot-red',
+  };
+
   function logEvent(evt) {
-    const log = document.getElementById('event-log');
+    const log   = document.getElementById('event-log');
     const entry = document.createElement('div');
-    entry.className = 'log-entry';
-    const ts = evt.ts ? evt.ts.slice(11, 19) : '—';
-    const data = JSON.stringify(evt.data || {}).slice(0, 80);
+    const isSaved = evt.type === 'saved';
+    entry.className = 'log-entry' + (isSaved ? ' is-saved' : '');
+
+    const ts   = evt.ts ? evt.ts.slice(11, 19) : '—';
+    const dot  = DOT_COLOR[evt.type] || '';
+    const name = evt.type.replace(/_/g, ' ');
+    const d    = evt.data || {};
+
+    const detail = (() => {
+      if (evt.type === 'hypothesis_formed') return d.hypothesis || '';
+      if (evt.type === 'test_scored')       return `score ${d.score?.toFixed(4)}  baseline ${d.baseline?.toFixed(4)}`;
+      if (evt.type === 'subagent_spawned')  return d.goal || '';
+      if (evt.type === 'saved')             return `saved at ${d.score?.toFixed(4)}`;
+      if (evt.type === 'error')             return d.message || JSON.stringify(d).slice(0, 60);
+      return JSON.stringify(d).slice(0, 60);
+    })();
+
     entry.innerHTML = `
       <span class="log-ts">${esc(ts)}</span>
-      <span class="log-type ${esc(evt.type)}">${esc(evt.type)}</span>
-      <span class="log-data">${esc(data)}</span>`;
+      <span class="log-dot ${dot}"></span>
+      <span class="log-body">
+        <div class="log-name">${esc(name)}</div>
+        ${detail ? `<div class="log-detail">${esc(detail)}</div>` : ''}
+      </span>`;
+
     log.prepend(entry);
-    // Keep max 200 entries
+    logCount++;
+    document.getElementById('log-count').textContent =
+      `${logCount} event${logCount !== 1 ? 's' : ''}`;
     while (log.children.length > 200) log.removeChild(log.lastChild);
   }
 
-  // ── Status pill ───────────────────────────────────────────────────────────
+  // ── Status pill ─────────────────────────────────────────────
   function setStatus(s) {
     const pill = document.getElementById('status-pill');
-    pill.textContent = s;
+    const text = document.getElementById('status-text');
     pill.className = `status-pill ${s}`;
+    text.textContent = s.charAt(0).toUpperCase() + s.slice(1);
   }
 
   function updateStats({ iteration, baseline, commit }) {
-    if (iteration !== undefined) document.getElementById('stat-iter').textContent = iteration;
-    if (baseline !== undefined) document.getElementById('stat-baseline').textContent = baseline.toFixed(4);
-    if (commit !== undefined) document.getElementById('stat-commit').textContent = commit || '—';
+    if (iteration !== undefined)
+      document.getElementById('stat-iter').textContent = iteration;
+    if (baseline !== undefined)
+      document.getElementById('stat-baseline').textContent = baseline.toFixed(4);
+    if (commit !== undefined)
+      document.getElementById('stat-commit').textContent = commit ? commit.slice(0, 7) : '—';
   }
 
-  // ── API calls ─────────────────────────────────────────────────────────────
+  // ── API ──────────────────────────────────────────────────────
   async function apiCall(path) {
-    try {
-      const r = await fetch(path, { method: 'POST' });
-      const j = await r.json();
-      console.log(path, j);
-    } catch (e) {
-      console.error(path, e);
-    }
+    try { await fetch(path, { method: 'POST' }); } catch (e) { console.error(path, e); }
   }
 
   async function refreshState() {
@@ -560,21 +852,18 @@
       const r = await fetch('/state');
       const j = await r.json();
       updateStats({ iteration: j.iteration, baseline: j.baseline_score, commit: j.working_commit });
-      if (j.current_hypothesis) {
+      if (j.current_hypothesis)
         document.getElementById('hypothesis-text').textContent = j.current_hypothesis;
-      }
       setStatus(j.running ? (j.paused ? 'paused' : 'running') : 'stopped');
     } catch {}
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
   function esc(s) {
-    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return String(s ?? '')
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
   window.addEventListener('resize', drawChart);
-
-  // Boot
   connectWS();
   refreshState();
 </script>
