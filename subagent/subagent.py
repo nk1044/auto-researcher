@@ -176,6 +176,7 @@ class Subagent:
                 rolling_summary=self._rolling_summary,
                 token_budget=self.token_budget,
                 ratios=self.ratios,
+                workspace=self._worktree_path,
             )
 
             messages = [

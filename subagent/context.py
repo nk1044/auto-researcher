@@ -2,18 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Optional
 
 from shared.types import MemoryEntry, SubtaskBrief
 
-if TYPE_CHECKING:
-    pass
-
 logger = logging.getLogger(__name__)
 
-# Characters-per-token approximation (conservative; 1 token ≈ 3.5 chars for code)
 CHARS_PER_TOKEN = 3
 
 
@@ -25,9 +22,18 @@ def _truncate(text: str, max_chars: int, label: str) -> str:
     if len(text) <= max_chars:
         return text
     keep = max_chars - 40
-    truncated = text[:keep]
     logger.debug("Section %r truncated from %d to %d chars", label, len(text), max_chars)
-    return truncated + f"\n... [truncated — {len(text) - keep} chars omitted]"
+    return text[:keep] + f"\n... [truncated — {len(text) - keep} chars omitted]"
+
+
+def _list_workspace_files(workspace: str) -> list[str]:
+    """Return all non-.git files in the workspace, relative paths."""
+    ws = Path(workspace)
+    files = []
+    for p in sorted(ws.rglob("*")):
+        if p.is_file() and ".git" not in p.parts:
+            files.append(str(p.relative_to(ws)))
+    return files
 
 
 def read_file_slice(path: str, max_chars: int) -> str:
@@ -47,108 +53,114 @@ def assemble_subagent_context(
     rolling_summary: str,
     token_budget: int,
     ratios: dict[str, float],
+    workspace: Optional[str] = None,
 ) -> str:
-    """Assemble a subagent's full context string under token_budget.
-
-    Section allocations (from ratios dict, keys: task_brief, files, memory, rolling_summary):
-      ~20% task brief + tool schemas
-      ~50% in-scope file slices (fresh from disk)
-      ~15% narrowly-relevant retrieved memory
-      ~15% rolling self-summary
-
-    Never includes: sibling subagent logs, global transcript, coordinator internals.
-    """
     task_brief_chars = _budget_chars(token_budget, ratios.get("task_brief", 0.20))
-    files_chars = _budget_chars(token_budget, ratios.get("files", 0.50))
-    memory_chars = _budget_chars(token_budget, ratios.get("memory", 0.15))
-    summary_chars = _budget_chars(token_budget, ratios.get("rolling_summary", 0.15))
+    files_chars      = _budget_chars(token_budget, ratios.get("files", 0.50))
+    memory_chars     = _budget_chars(token_budget, ratios.get("memory", 0.15))
+    summary_chars    = _budget_chars(token_budget, ratios.get("rolling_summary", 0.15))
 
     sections: list[str] = []
 
-    # --- Section 1: Task brief + tool schemas ---
-    import json
-
+    # --- Section 1: Task brief + workspace listing + tool schemas ---
     brief_text = (
         f"## Subtask Brief\n"
-        f"ID: {brief.id}\n"
         f"Goal: {brief.goal}\n"
-        f"Scope (files/modules): {', '.join(brief.scope) if brief.scope else 'not specified'}\n"
+        f"Suggested scope: {', '.join(brief.scope) if brief.scope else 'none — explore workspace'}\n"
         f"Constraints: {brief.constraints}\n"
         f"Expected output: {brief.expected_output}\n"
-        f"Required skills: {', '.join(brief.required_skills) if brief.required_skills else 'none'}\n"
     )
-    if tool_schemas:
-        tools_text = "\n## Available Tools\n" + json.dumps(tool_schemas, indent=2)
-        combined = brief_text + tools_text
-    else:
-        combined = brief_text
-    sections.append(_truncate(combined, task_brief_chars, "task_brief"))
 
-    # --- Section 2: In-scope file slices ---
-    if brief.scope:
-        per_file_chars = max(200, files_chars // max(len(brief.scope), 1))
-        file_parts: list[str] = ["## In-Scope Files (current state)"]
-        for path in brief.scope:
-            content = read_file_slice(path, per_file_chars)
+    if workspace:
+        ws_files = _list_workspace_files(workspace)
+        listing = "\n".join(ws_files[:100])
+        brief_text += (
+            f"\n## Actual Workspace Files (USE THESE EXACT PATHS)\n"
+            f"{listing}\n"
+            f"\nNOTE: The suggested scope above may be inaccurate. "
+            f"Always use file paths from the list above."
+        )
+
+    if tool_schemas:
+        brief_text += "\n\n## Available Tools\n" + json.dumps(tool_schemas, indent=2)
+
+    sections.append(_truncate(brief_text, task_brief_chars, "task_brief"))
+
+    # --- Section 2: In-scope file slices (resolved relative to workspace) ---
+    scope_paths = brief.scope if brief.scope else []
+    if workspace and scope_paths:
+        # Resolve each scope path relative to the workspace
+        resolved: list[tuple[str, str]] = []
+        ws_files_set = set(_list_workspace_files(workspace))
+        for rel_path in scope_paths:
+            full = str(Path(workspace) / rel_path)
+            if rel_path in ws_files_set:
+                resolved.append((rel_path, full))
+            else:
+                # Try to find the closest match by filename
+                name = Path(rel_path).name
+                matches = [f for f in ws_files_set if Path(f).name == name]
+                if matches:
+                    match = matches[0]
+                    resolved.append((match, str(Path(workspace) / match)))
+                else:
+                    resolved.append((rel_path, full))  # will show NOT FOUND
+
+        per_file_chars = max(200, files_chars // max(len(resolved), 1))
+        file_parts: list[str] = ["## In-Scope File Contents"]
+        for rel_path, full_path in resolved:
+            content = read_file_slice(full_path, per_file_chars)
             if content.startswith("[could not read"):
                 file_parts.append(
-                    f"\n### {path}\n"
-                    f"⚠️  FILE NOT FOUND — this path does not exist in the workspace.\n"
-                    f"Use run_shell to list actual files and find the correct path."
+                    f"\n### {rel_path}\n"
+                    f"⚠️  NOT FOUND — pick a file from the workspace listing above instead."
                 )
             else:
-                file_parts.append(f"\n### {path}\n```\n{content}\n```")
+                file_parts.append(f"\n### {rel_path}\n```\n{content}\n```")
         file_section = "\n".join(file_parts)
+    elif workspace:
+        file_section = "## In-Scope Files\n(no scope specified — pick relevant files from the workspace listing above)"
     else:
-        file_section = "## In-Scope Files\n(no specific scope assigned — use run_shell to discover files)"
+        file_section = "## In-Scope Files\n(workspace path not available)"
+
     sections.append(_truncate(file_section, files_chars, "files"))
 
     # --- Section 3: Retrieved memory ---
     if memory_entries:
         mem_parts = ["## Relevant Past Iterations"]
         for entry in memory_entries:
-            outcome_label = f"[{entry.outcome.upper()}]" if hasattr(entry.outcome, "upper") else f"[{entry.outcome}]"
+            label = f"[{entry.outcome.value if hasattr(entry.outcome, 'value') else entry.outcome}]"
             remark = f" — {entry.remark}" if entry.remark else ""
-            mem_parts.append(
-                f"- {outcome_label} score={entry.score:.3f}{remark}: {entry.text[:300]}"
-            )
+            mem_parts.append(f"- {label} score={entry.score:.3f}{remark}: {entry.text[:300]}")
         mem_section = "\n".join(mem_parts)
     else:
-        mem_section = "## Relevant Past Iterations\n(none retrieved)"
+        mem_section = "## Relevant Past Iterations\n(none yet)"
     sections.append(_truncate(mem_section, memory_chars, "memory"))
 
-    # --- Section 4: Rolling self-summary ---
-    if rolling_summary:
-        summary_section = f"## Progress Summary (this subtask so far)\n{rolling_summary}"
-    else:
-        summary_section = "## Progress Summary\n(starting fresh)"
+    # --- Section 4: Rolling summary ---
+    summary_section = (
+        f"## Progress So Far\n{rolling_summary}"
+        if rolling_summary
+        else "## Progress So Far\n(first step)"
+    )
     sections.append(_truncate(summary_section, summary_chars, "rolling_summary"))
 
     result = "\n\n".join(sections)
-    total_chars = len(result)
-    total_tokens_est = total_chars // CHARS_PER_TOKEN
     logger.debug(
-        "Subagent context assembled: %d chars (~%d tokens), budget: %d tokens",
-        total_chars,
-        total_tokens_est,
-        token_budget,
+        "Subagent context: %d chars (~%d tokens), budget %d tokens",
+        len(result), len(result) // CHARS_PER_TOKEN, token_budget,
     )
     return result
 
 
-def regenerate_rolling_summary_prompt(
-    brief: SubtaskBrief,
-    steps_history: list[dict],
-) -> str:
-    """Build the prompt asking the model to summarize progress so far."""
+def regenerate_rolling_summary_prompt(brief: SubtaskBrief, steps_history: list[dict]) -> str:
     steps_text = "\n".join(
         f"Step {i+1}: {s.get('action', '')} → {str(s.get('result', ''))[:200]}"
         for i, s in enumerate(steps_history[-20:])
     )
     return (
-        f"You are working on subtask: {brief.goal}\n\n"
-        f"Steps taken so far:\n{steps_text}\n\n"
-        "Write a concise 3-5 sentence summary of what has been accomplished, "
-        "what files were changed, and what still needs to be done. "
-        "Be specific about file names and changes. Do not repeat the goal."
+        f"Subtask: {brief.goal}\n\n"
+        f"Steps so far:\n{steps_text}\n\n"
+        "Write a 3-5 sentence summary: what was accomplished, which files were changed, "
+        "and what still needs to be done. Be specific about file names."
     )
