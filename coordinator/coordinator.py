@@ -669,18 +669,28 @@ class Coordinator:
             f"  - Each iteration produces exactly one hypothesis.\n"
         )
 
+    _CODE_EXTS = {
+        ".py", ".js", ".ts", ".java", ".cpp", ".c", ".go",
+        ".rs", ".rb", ".swift", ".kt", ".cs", ".md",
+    }
+
     def _load_file_slices(self, max_files: int = 8) -> dict[str, str]:
-        """Load the most recently modified Python files from the target repo."""
+        """Load the most recently modified code files from the target repo."""
         repo = Path(self.repo_path)
         if not repo.exists():
             return {}
-        py_files = sorted(
-            repo.rglob("*.py"),
+        code_files = sorted(
+            [
+                f for f in repo.rglob("*")
+                if f.is_file()
+                and f.suffix in self._CODE_EXTS
+                and ".git" not in f.parts
+            ],
             key=lambda p: p.stat().st_mtime,
             reverse=True,
         )
         slices: dict[str, str] = {}
-        for f in py_files[:max_files]:
+        for f in code_files[:max_files]:
             try:
                 slices[str(f.relative_to(repo))] = f.read_text(
                     encoding="utf-8", errors="replace"
@@ -689,17 +699,24 @@ class Coordinator:
                 pass
         return slices
 
-    def _list_repo_files(self, max_files: int = 50) -> str:
-        """Return a newline-separated listing of Python files in the repo."""
+    def _list_repo_files(self, max_files: int = 80) -> str:
+        """Return a full directory tree of the target repo (dirs + code files)."""
         repo = Path(self.repo_path)
         if not repo.exists():
             return "(repo not found)"
-        files = [
-            str(f.relative_to(repo))
-            for f in sorted(repo.rglob("*.py"))
-            if ".git" not in f.parts
-        ]
-        return "\n".join(files[:max_files])
+        lines: list[str] = []
+        for path in sorted(repo.rglob("*")):
+            if ".git" in path.parts:
+                continue
+            rel = path.relative_to(repo)
+            if path.is_dir():
+                lines.append(f"{rel}/")
+            elif path.suffix in self._CODE_EXTS:
+                lines.append(str(rel))
+            if len(lines) >= max_files:
+                lines.append("... (truncated)")
+                break
+        return "\n".join(lines) if lines else "(no code files found)"
 
     def _format_trajectory(self, last_n: int = 7) -> str:
         """Return a compact score history string for the hypothesis prompt."""

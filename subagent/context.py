@@ -90,10 +90,17 @@ def assemble_subagent_context(
         file_parts: list[str] = ["## In-Scope Files (current state)"]
         for path in brief.scope:
             content = read_file_slice(path, per_file_chars)
-            file_parts.append(f"\n### {path}\n```\n{content}\n```")
+            if content.startswith("[could not read"):
+                file_parts.append(
+                    f"\n### {path}\n"
+                    f"⚠️  FILE NOT FOUND — this path does not exist in the workspace.\n"
+                    f"Use run_shell to list actual files and find the correct path."
+                )
+            else:
+                file_parts.append(f"\n### {path}\n```\n{content}\n```")
         file_section = "\n".join(file_parts)
     else:
-        file_section = "## In-Scope Files\n(no specific scope assigned)"
+        file_section = "## In-Scope Files\n(no specific scope assigned — use run_shell to discover files)"
     sections.append(_truncate(file_section, files_chars, "files"))
 
     # --- Section 3: Retrieved memory ---
