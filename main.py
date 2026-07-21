@@ -138,10 +138,28 @@ async def startup(config: dict[str, Any]) -> None:
     # ── Tool runtime ──────────────────────────────────────────────────────────
     logger.info("Loading tools...")
     from tools.save_tool import save_to_github
+    from tools.builtin.files import read_file, write_file, edit_file, list_files, delete_file, create_dir
+    from tools.builtin.shell import run_shell
+    from tools.builtin.search import search_files, find_files
+    from tools.builtin.web import web_fetch, web_search
 
     tools = ToolRuntime(config)
-    tools.register(save_to_github)   # built-in save tool
+
+    # Built-in tools (always registered)
+    for fn in [read_file, write_file, edit_file, list_files, delete_file, create_dir,
+               run_shell, search_files, find_files, web_fetch, web_search]:
+        tools.register(fn)
+
+    # Built-in save tool (coordinator-only)
+    tools.register(save_to_github)
+
+    # User-defined tools (test oracle + custom actions from user_tools/)
     tools.auto_discover("user_tools")
+
+    # Wire up permission handler
+    from server import permissions as perm_module
+    tools.set_permission_handler(perm_module.request)
+
     logger.info("Registered tools: %s", list(tools._tools.keys()))
 
     # ── Coordinator ───────────────────────────────────────────────────────────

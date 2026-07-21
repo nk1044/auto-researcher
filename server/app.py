@@ -13,6 +13,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from server.events import Event, EventType, aemit, bus
+from server import permissions
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,31 @@ async def get_state() -> JSONResponse:
             "paused": not c.pause_gate.is_set(),
         }
     )
+
+
+# ── WebSocket event stream ────────────────────────────────────────────────────
+
+# ── Permission endpoints ──────────────────────────────────────────────────────
+
+@app.post("/permission/{req_id}/approve")
+async def approve_permission(req_id: str) -> JSONResponse:
+    ok = permissions.resolve(req_id, approved=True)
+    if not ok:
+        return JSONResponse({"error": "unknown or expired request"}, status_code=404)
+    return JSONResponse({"status": "approved", "request_id": req_id})
+
+
+@app.post("/permission/{req_id}/deny")
+async def deny_permission(req_id: str) -> JSONResponse:
+    ok = permissions.resolve(req_id, approved=False)
+    if not ok:
+        return JSONResponse({"error": "unknown or expired request"}, status_code=404)
+    return JSONResponse({"status": "denied", "request_id": req_id})
+
+
+@app.get("/permission/pending")
+async def list_pending_permissions() -> JSONResponse:
+    return JSONResponse({"pending": permissions.pending_ids()})
 
 
 # ── WebSocket event stream ────────────────────────────────────────────────────

@@ -31,6 +31,10 @@ class EventType(str, Enum):
     ERROR = "error"
     LOOP_STARTED = "loop_started"
     REWARD_HACK_REJECTED = "reward_hack_rejected"
+    SUBAGENT_STEP = "subagent_step"
+    PERMISSION_REQUEST = "permission_request"
+    PERMISSION_GRANTED = "permission_granted"
+    PERMISSION_DENIED = "permission_denied"
 
 
 @dataclass

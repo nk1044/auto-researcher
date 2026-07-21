@@ -28,6 +28,11 @@ class ToolRuntime:
     def __init__(self, config: dict[str, Any]) -> None:
         self._config = config
         self._tools: dict[str, ToolSchema] = {}
+        # Set by main.py after startup so ToolRuntime doesn't directly import server.*
+        self._permission_handler: Any = None  # async callable(command, reason, requester_id) -> bool
+
+    def set_permission_handler(self, handler: Any) -> None:
+        self._permission_handler = handler
 
     def register(self, fn: Callable) -> None:
         schema: ToolSchema = getattr(fn, "schema", None)
@@ -78,6 +83,7 @@ class ToolRuntime:
         self,
         name: str,
         caller: str = "coordinator",
+        requester_id: str = "",
         **kwargs: Any,
     ) -> ToolResult:
         schema = self._tools.get(name)
@@ -89,6 +95,37 @@ class ToolRuntime:
                 success=False,
                 error="Restricted: test/save are coordinator-only",
             )
+
+        # ── Danger check for run_shell ────────────────────────────────────────
+        if name == "run_shell":
+            command = kwargs.get("command", "")
+            from tools.danger import classify
+            risk, reason = classify(command)
+
+            if risk == "blocked":
+                logger.warning("BLOCKED command from %s: %s", caller, command[:200])
+                return ToolResult(
+                    success=False,
+                    error=f"Command blocked — dangerous operation ({reason}): {command[:150]}",
+                )
+
+            if risk == "needs_permission":
+                if self._permission_handler is None:
+                    logger.warning(
+                        "Permission required for [%s] but no handler set — denying: %s",
+                        reason, command[:100],
+                    )
+                    return ToolResult(
+                        success=False,
+                        error=f"Permission required ({reason}) but permission system is not configured.",
+                    )
+                rid = requester_id or caller
+                approved = await self._permission_handler(command, reason, rid)
+                if not approved:
+                    return ToolResult(
+                        success=False,
+                        error=f"Permission denied by user ({reason}): {command[:100]}",
+                    )
 
         fn = schema.fn
         source_file = schema.source_file

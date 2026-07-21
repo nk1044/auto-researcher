@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import copy
+import json
 import logging
 import os
-import subprocess
-import tempfile
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 from server.events import EventType, aemit
@@ -15,7 +14,6 @@ from shared.types import SubtaskBrief, SubtaskResult, TaskStatus
 
 from .context import (
     assemble_subagent_context,
-    read_file_slice,
     regenerate_rolling_summary_prompt,
 )
 
@@ -26,19 +24,52 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a focused software engineering subagent. Your job is to complete exactly one subtask by reading and editing files in your assigned workspace. You work independently — you cannot communicate with other agents.
 
-FIRST STEP — always start by listing the actual files in your workspace before doing anything else:
-  run_shell with: find . -type f | grep -v '.git' | sort | head -60
-This is mandatory. The file paths in your brief are suggestions only — the real files on disk are the ground truth. Never assume a file exists without verifying.
+def _strip_workspace_param(schemas: list[dict]) -> list[dict]:
+    """Return schemas with the 'workspace' parameter removed.
 
-Rules:
-- Only edit files that actually exist on disk (verified via the listing above).
-- If a suggested scope file does not exist, find the closest matching real file and work on that instead.
-- Do NOT call the 'test' or 'save' tools — those are coordinator-only.
-- When you have completed the task, respond with DONE followed by a summary of your changes.
-- If you cannot complete the task, respond with FAILED followed by the reason.
-- Be precise and make minimal changes that accomplish the goal.
+    workspace is always auto-injected by the runtime before the tool is called,
+    so exposing it to the model causes confusion (it doesn't know the path).
+    """
+    result = []
+    for s in schemas:
+        s = copy.deepcopy(s)
+        params = s.get("function", {}).get("parameters", {})
+        params.get("properties", {}).pop("workspace", None)
+        req = params.get("required", [])
+        if "workspace" in req:
+            req.remove("workspace")
+        result.append(s)
+    return result
+
+
+SYSTEM_PROMPT = """You are a software engineering subagent. Complete the assigned subtask by reading and editing files in your workspace using the provided tools.
+
+## Workflow — follow this EXACTLY
+
+Step 1 — ALWAYS start by listing files:
+  Call run_shell with command="find . -type f | grep -v .git | sort | head -80"
+  Do NOT skip this step. The workspace listing in your brief may be outdated.
+
+Step 2 — Read the relevant file(s):
+  Call read_file with the path you want to inspect (relative to workspace root).
+
+Step 3 — Make the change:
+  Call write_file with the full new content of the file.
+  Never truncate or summarise — write the COMPLETE file content.
+
+Step 4 — Verify:
+  Call run_shell with command="git diff --stat" to confirm the change was recorded.
+
+Step 5 — Signal completion:
+  If you made at least one file change: respond with exactly DONE — <brief summary of what changed>
+  If the task is impossible: respond with exactly FAILED — <reason>
+
+## Rules
+- workspace is ALWAYS auto-injected into every tool call. Do NOT pass a workspace argument.
+- Only use paths that appeared in the Step 1 listing.
+- Do NOT call run_tests or save_to_github — those are coordinator-only.
+- Make real code changes. Do not stop without editing at least one file.
 """
 
 
@@ -156,38 +187,37 @@ class Subagent:
         assert self.brief.model is not None
         from models.client import ChatMessage
 
-        tool_schemas = self.tools.get_schemas(kinds=["action"])
+        raw_schemas = self.tools.get_schemas(kinds=["action"])
+        # Strip 'workspace' from schemas — it's always auto-injected; the model
+        # must not see it as a required argument or it will hallucinate paths.
+        tool_schemas = _strip_workspace_param(raw_schemas)
+
         memory_entries = await self.memory.retrieve(
             self.brief.goal, k=3, include_failures=True
         )
 
+        # Build one-time context (task brief + file listing)
+        context = assemble_subagent_context(
+            brief=self.brief,
+            tool_schemas=tool_schemas,
+            memory_entries=memory_entries,
+            rolling_summary=self._rolling_summary,
+            token_budget=self.token_budget,
+            ratios=self.ratios,
+            workspace=self._worktree_path,
+        )
+
+        # Running conversation: system + initial context, then tool exchanges
+        conversation: list[ChatMessage] = [
+            ChatMessage(role="system", content=SYSTEM_PROMPT),
+            ChatMessage(role="user", content=context),
+        ]
+
         step = 0
         files_touched: list[str] = []
+        tool_calls_total = 0
 
         while step < self.step_cap:
-            # Regenerate rolling summary periodically
-            if step > 0 and step % self.summary_every_n == 0:
-                self._rolling_summary = await self._regenerate_summary()
-
-            context = assemble_subagent_context(
-                brief=self.brief,
-                tool_schemas=tool_schemas,
-                memory_entries=memory_entries,
-                rolling_summary=self._rolling_summary,
-                token_budget=self.token_budget,
-                ratios=self.ratios,
-                workspace=self._worktree_path,
-            )
-
-            messages = [
-                ChatMessage(role="system", content=SYSTEM_PROMPT),
-                ChatMessage(role="user", content=context),
-            ]
-            # Add abbreviated step history (last 5 exchanges)
-            for s in self._steps_history[-5:]:
-                messages.append(ChatMessage(role="assistant", content=s.get("action", "")))
-                messages.append(ChatMessage(role="user", content=str(s.get("result", ""))))
-
             await aemit(
                 EventType.SUBAGENT_PROGRESS,
                 {"subtask_id": self.brief.id, "step": step},
@@ -195,18 +225,135 @@ class Subagent:
 
             response = await self.client.chat(
                 model_spec=self.brief.model,
-                messages=messages,
+                messages=conversation,
                 tools=tool_schemas if tool_schemas else None,
             )
 
             content = response.content.strip()
             step += 1
 
-            # Check terminal conditions
-            if content.upper().startswith("DONE"):
+            logger.info(
+                "Subagent %s step %d — content=%r  tool_calls=%d",
+                self.brief.id[:8], step,
+                content[:200],
+                len(response.tool_calls),
+            )
+
+            # ── Tool calls ─────────────────────────────────────────────────
+            if response.tool_calls:
+                tool_calls_total += len(response.tool_calls)
+                # Append assistant message with tool_calls
+                conversation.append(
+                    ChatMessage(role="assistant", content=content, tool_calls=response.tool_calls)
+                )
+
+                for tc in response.tool_calls:
+                    fn_call = tc.get("function", tc)
+                    name = fn_call.get("name", "")
+                    args = fn_call.get("arguments", {})
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except Exception:
+                            args = {}
+                    tc_id = tc.get("id", name)
+
+                    logger.info(
+                        "Subagent %s: calling tool %r with args %s",
+                        self.brief.id[:8], name, json.dumps(args)[:200],
+                    )
+                    await aemit(
+                        EventType.SUBAGENT_STEP,
+                        {
+                            "subtask_id": self.brief.id,
+                            "step": step,
+                            "kind": "tool_call",
+                            "tool": name,
+                            "args": {k: v for k, v in args.items() if k != "content"},
+                        },
+                    )
+
+                    # Inject workspace before calling
+                    if "workspace" not in args and self._worktree_path:
+                        args["workspace"] = self._worktree_path
+
+                    tool_result = await self.tools.call(
+                        name, caller="subagent", requester_id=self.brief.id, **args
+                    )
+                    result_text = (
+                        json.dumps(tool_result.value)
+                        if tool_result.success
+                        else f"ERROR: {tool_result.error}"
+                    )
+
+                    logger.info(
+                        "Subagent %s: tool %r result success=%s  value=%s",
+                        self.brief.id[:8], name, tool_result.success, result_text[:300],
+                    )
+                    await aemit(
+                        EventType.SUBAGENT_STEP,
+                        {
+                            "subtask_id": self.brief.id,
+                            "step": step,
+                            "kind": "tool_result",
+                            "tool": name,
+                            "success": tool_result.success,
+                            "result": result_text[:500],
+                        },
+                    )
+
+                    # Track files written
+                    if tool_result.success and isinstance(tool_result.value, dict):
+                        written = tool_result.value.get("written")
+                        if written and written not in files_touched:
+                            files_touched.append(written)
+
+                    # Append proper tool-result message back to conversation
+                    conversation.append(
+                        ChatMessage(
+                            role="tool",
+                            content=result_text[:2000],
+                            tool_call_id=tc_id,
+                        )
+                    )
+                continue  # next step after processing all tool calls
+
+            # ── No tool calls — text-only response ─────────────────────────
+            await aemit(
+                EventType.SUBAGENT_STEP,
+                {
+                    "subtask_id": self.brief.id,
+                    "step": step,
+                    "kind": "thinking",
+                    "content": content[:300],
+                },
+            )
+
+            upper = content.upper()
+
+            # Check terminal: DONE
+            if upper.startswith("DONE"):
                 diff = await self.get_diff()
-                files_touched = self._extract_touched_files(diff)
-                summary = content[4:].strip() if len(content) > 4 else "Task completed."
+                files_touched = self._extract_touched_files(diff) or files_touched
+                if not diff.strip() and tool_calls_total == 0:
+                    # Model said DONE without doing anything — push back
+                    logger.warning(
+                        "Subagent %s said DONE but made no tool calls and no diff — pushing back",
+                        self.brief.id[:8],
+                    )
+                    conversation.append(ChatMessage(role="assistant", content=content))
+                    conversation.append(ChatMessage(
+                        role="user",
+                        content=(
+                            "You said DONE but have not made any changes yet. "
+                            "You MUST call run_shell first to list files, then read_file to inspect "
+                            "the target file, then write_file to modify it. "
+                            "Start over from Step 1."
+                        ),
+                    ))
+                    continue
+
+                summary = content[4:].strip(" —:-") or "Task completed."
                 await aemit(
                     EventType.SUBAGENT_DONE,
                     {
@@ -225,8 +372,10 @@ class Subagent:
                     steps_taken=step,
                 )
 
-            if content.upper().startswith("FAILED"):
-                reason = content[6:].strip()
+            # Check terminal: FAILED
+            if upper.startswith("FAILED"):
+                reason = content[6:].strip(" —:-")
+                logger.warning("Subagent %s reported FAILED: %s", self.brief.id[:8], reason[:200])
                 await aemit(
                     EventType.SUBAGENT_DONE,
                     {"subtask_id": self.brief.id, "status": "failed", "reason": reason},
@@ -238,22 +387,18 @@ class Subagent:
                     steps_taken=step,
                 )
 
-            # Handle tool calls
-            if response.tool_calls:
-                result = await self._execute_tool_calls(response.tool_calls)
-                for fname in result.get("files_written", []):
-                    if fname not in files_touched:
-                        files_touched.append(fname)
-                self._steps_history.append(
-                    {"action": content, "tool_calls": response.tool_calls, "result": result}
-                )
-            else:
-                # Pure reasoning step — record and continue
-                self._steps_history.append({"action": content, "result": "(no tool call)"})
+            # Pure reasoning — append and continue
+            conversation.append(ChatMessage(role="assistant", content=content))
+            # Nudge if the model keeps reasoning without using tools
+            if step % 3 == 0 and tool_calls_total == 0:
+                conversation.append(ChatMessage(
+                    role="user",
+                    content="Use a tool now. Call run_shell to list files in the workspace.",
+                ))
 
-        # Reached step cap without DONE/FAILED
+        # Step cap reached
         diff = await self.get_diff()
-        files_touched = self._extract_touched_files(diff)
+        files_touched = self._extract_touched_files(diff) or files_touched
         await aemit(
             EventType.SUBAGENT_DONE,
             {"subtask_id": self.brief.id, "status": "partial", "steps": step},
@@ -278,30 +423,6 @@ class Subagent:
             messages=[ChatMessage(role="user", content=prompt)],
         )
         return response.content.strip()
-
-    async def _execute_tool_calls(self, tool_calls: list[dict]) -> dict[str, Any]:
-        """Execute tool calls sequentially; return combined results."""
-        results: dict[str, Any] = {"outputs": [], "files_written": []}
-        for tc in tool_calls:
-            fn_call = tc.get("function", tc)
-            name = fn_call.get("name", "")
-            args = fn_call.get("arguments", {})
-            if isinstance(args, str):
-                import json
-                try:
-                    args = json.loads(args)
-                except Exception:
-                    args = {}
-
-            # Inject workspace path for file operations
-            if "workspace" not in args and self._worktree_path:
-                args["workspace"] = self._worktree_path
-
-            tool_result = await self.tools.call(name, caller="subagent", **args)
-            results["outputs"].append(
-                {"tool": name, "success": tool_result.success, "value": tool_result.value}
-            )
-        return results
 
     def _extract_touched_files(self, diff: str) -> list[str]:
         """Parse unified diff for modified file paths."""
