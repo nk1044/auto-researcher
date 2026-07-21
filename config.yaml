@@ -1,18 +1,24 @@
 ollama_host: "http://localhost:11434"
 
 models:
-  coordinator: "qwen2.5:14b-instruct"    # drives hypothesis/decompose/integrate
-  default:     "qwen2.5-coder:7b"         # fallback for any unmatched subtask
-  embed:       "nomic-embed-text"          # embeddings (never routed)
+  coordinator: "lazarevtill/Skywork-OR1-32B-Preview:latest"
+  default: "lazarevtill/Skywork-OR1-32B-Preview:latest"
+  embed: "nomic-embed-text"
+
   workers:
-    - name: "mathstral:7b"
-      skills: ["math", "proof", "numeric"]
+    - name: "devstral-small-2:24b"
+      skills: [
+        "code", "debug", "refactor", "architecture", "review", "test", "implementation", "optimization"
+      ]
       options:
-        temperature: 0.2
-    - name: "qwen2.5-coder:7b"
-      skills: ["code", "refactor", "debug"]
-    - name: "deepseek-r1:8b"
-      skills: ["reasoning", "planning", "analysis"]
+        temperature: 0.1
+
+    - name: "lazarevtill/Skywork-OR1-32B-Preview:latest"
+      skills: [
+        "reasoning", "planning", "analysis", "math", "proof", "verification", "decomposition", "synthesis"
+      ]
+      options:
+        temperature: 0.3
 
 # === Target ===
 target_repo: "/path/to/your/repo"          # REQUIRED: absolute path to the repo under improvement
