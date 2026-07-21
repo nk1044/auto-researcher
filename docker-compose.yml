@@ -1,0 +1,45 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: auto-researcher-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ./volumes/ollama:/root/.ollama
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # Uncomment for NVIDIA GPU support:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # app:
+  #   build: .
+  #   container_name: auto-researcher-app
+  #   ports:
+  #     - "8000:8000"
+  #   volumes:
+  #     - ./volumes/data:/app/data
+  #     # Mount your target repository into the container.
+  #     # The path inside the container must match target_repo in config.docker.yaml.
+  #     # - /path/to/your/repo:/repo
+  #     # Uncomment to use host git credentials for GitHub push:
+  #     # - ~/.gitconfig:/root/.gitconfig:ro
+  #     # - ~/.ssh:/root/.ssh:ro
+  #   depends_on:
+  #     ollama:
+  #       condition: service_healthy
+  #   restart: unless-stopped
+
+volumes:
+  # Placeholder declarations — actual storage uses bind mounts under ./volumes/
+  # so data lives directly in this project directory.

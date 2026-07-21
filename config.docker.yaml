@@ -1,0 +1,66 @@
+ollama_host: "http://ollama:11434"
+
+models:
+  coordinator: "qwen2.5:14b-instruct"
+  default:     "qwen2.5-coder:7b"
+  embed:       "nomic-embed-text"
+  workers:
+    - name: "mathstral:7b"
+      skills: ["math", "proof", "numeric"]
+      options:
+        temperature: 0.2
+    - name: "qwen2.5-coder:7b"
+      skills: ["code", "refactor", "debug"]
+    - name: "deepseek-r1:8b"
+      skills: ["reasoning", "planning", "analysis"]
+
+# REQUIRED: Set this to the path of the repo inside the container.
+# In docker-compose.yml, mount your repo with:
+#   - /path/to/your/repo:/repo
+# then set target_repo to /repo below.
+target_repo: "/repo"
+worktree_root: "/tmp/auto-researcher/worktrees"
+github_remote: "origin"
+github_branch_prefix: "auto-researcher"
+
+max_subagents: 4
+dup_threshold: 0.97
+novelty_boost: 0.3
+
+context_token_budget: 8192
+
+coordinator_context_ratios:
+  task_spec:       0.20
+  memory:          0.30
+  files:           0.35
+  rolling_summary: 0.15
+
+subagent_context_ratios:
+  task_brief:      0.20
+  files:           0.50
+  memory:          0.15
+  rolling_summary: 0.15
+
+subagent_step_cap: 20
+summary_every_n:   5
+
+sandbox:
+  max_cpu_seconds: 120
+  max_memory_mb:   512
+  timeout_seconds: 300
+
+data_dir: "/app/data"
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+
+protected_patterns:
+  - "tests/"
+  - "test/"
+  - "held_out/"
+  - "eval/"
+  - "benchmark/"
+  - "*.test.*"
+  - "test_*.py"
+  - "*_test.py"

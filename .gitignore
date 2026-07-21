@@ -44,3 +44,9 @@ Thumbs.db
 .env
 .env.local
 *.local
+
+# Docker persistent volumes (keep dirs, ignore contents)
+volumes/ollama/*
+volumes/data/*
+!volumes/ollama/.gitkeep
+!volumes/data/.gitkeep
