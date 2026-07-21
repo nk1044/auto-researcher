@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Auto-Researcher Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --border: #2a2d3d;
+      --text: #e2e8f0;
+      --muted: #718096;
+      --green: #48bb78;
+      --red: #fc8181;
+      --yellow: #f6e05e;
+      --blue: #63b3ed;
+      --purple: #b794f4;
+      --accent: #4299e1;
+      --win: #276749;
+      --mistake: #822727;
+    }
+
+    body { background: var(--bg); color: var(--text); font-family: 'SF Mono', 'Fira Code', monospace; font-size: 13px; min-height: 100vh; }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    header h1 { font-size: 16px; font-weight: 600; color: var(--blue); flex: 1; }
+    .status-pill {
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .status-pill.running { background: #1a472a; color: var(--green); }
+    .status-pill.stopped { background: #3d1c1c; color: var(--red); }
+    .status-pill.paused  { background: #3d3600; color: var(--yellow); }
+
+    .controls { display: flex; gap: 8px; }
+    button {
+      border: none;
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-size: 12px;
+      font-family: inherit;
+      cursor: pointer;
+      font-weight: 600;
+      transition: opacity 0.15s;
+    }
+    button:hover { opacity: 0.85; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-start  { background: #276749; color: #fff; }
+    .btn-stop   { background: #822727; color: #fff; }
+    .btn-pause  { background: #5c4b00; color: var(--yellow); }
+    .btn-resume { background: #1a4a6e; color: var(--blue); }
+
+    .main { display: grid; grid-template-columns: 1fr 340px; gap: 16px; padding: 16px; height: calc(100vh - 57px); overflow: hidden; }
+
+    .left-col { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+    .right-col { display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .card-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+
+    #hypothesis-text {
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--text);
+      min-height: 40px;
+    }
+    #hypothesis-rationale {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 6px;
+      font-style: italic;
+    }
+
+    .subagent-grid { display: flex; flex-direction: column; gap: 8px; }
+
+    .subagent-panel {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+    }
+    .subagent-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .subagent-id { font-size: 11px; color: var(--muted); }
+    .model-tag {
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 10px;
+      background: #1a2d4a;
+      color: var(--blue);
+    }
+    .fallback-tag {
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 10px;
+      background: #2d1a2d;
+      color: var(--purple);
+    }
+    .skill-tag {
+      font-size: 10px;
+      padding: 2px 7px;
+      border-radius: 10px;
+      background: #1a3520;
+      color: var(--green);
+    }
+    .subagent-goal { font-size: 12px; color: var(--text); margin-bottom: 4px; }
+    .subagent-status { font-size: 11px; }
+    .subagent-status.spawned  { color: var(--blue); }
+    .subagent-status.progress { color: var(--yellow); }
+    .subagent-status.success  { color: var(--green); }
+    .subagent-status.failed   { color: var(--red); }
+    .diff-preview {
+      font-size: 10px;
+      color: var(--muted);
+      max-height: 80px;
+      overflow: hidden;
+      margin-top: 4px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .integration-panel .label { color: var(--muted); font-size: 11px; }
+    .integration-panel .value { color: var(--text); font-size: 12px; margin-top: 2px; }
+
+    /* Score chart */
+    #score-chart { width: 100%; height: 80px; }
+    .score-value { font-size: 28px; font-weight: 700; color: var(--green); }
+    .score-remark { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .score-baseline { font-size: 11px; color: var(--muted); }
+
+    /* Memory/timeline log */
+    #event-log {
+      font-size: 11px;
+      max-height: 280px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .log-entry {
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+      padding: 2px 0;
+      border-bottom: 1px solid #1e2030;
+    }
+    .log-ts { color: var(--muted); flex-shrink: 0; font-size: 10px; }
+    .log-type { flex-shrink: 0; min-width: 120px; }
+    .log-data { color: var(--muted); word-break: break-all; }
+
+    .log-type.hypothesis_formed  { color: var(--blue); }
+    .log-type.dup_rejected        { color: var(--yellow); }
+    .log-type.decomposed          { color: var(--purple); }
+    .log-type.model_routed        { color: #81e6d9; }
+    .log-type.subagent_spawned    { color: var(--blue); }
+    .log-type.subagent_done       { color: var(--green); }
+    .log-type.test_scored         { color: var(--yellow); }
+    .log-type.saved               { color: var(--green); font-weight: 700; }
+    .log-type.error               { color: var(--red); }
+    .log-type.reward_hack_rejected{ color: var(--red); font-weight: 700; }
+
+    /* Stats row */
+    .stats-row { display: flex; gap: 12px; }
+    .stat-box {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      text-align: center;
+    }
+    .stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; }
+    .stat-value { font-size: 18px; font-weight: 700; color: var(--text); margin-top: 2px; }
+
+    .outcome-win     { color: var(--green); }
+    .outcome-mistake { color: var(--red); }
+
+    canvas { display: block; }
+
+    #connection-status { font-size: 11px; padding: 2px 8px; border-radius: 10px; }
+    #connection-status.connected    { background: #1a3520; color: var(--green); }
+    #connection-status.disconnected { background: #3d1c1c; color: var(--red); }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Auto-Researcher</h1>
+  <span id="status-pill" class="status-pill stopped">stopped</span>
+  <span id="connection-status" class="disconnected">disconnected</span>
+  <div class="controls">
+    <button class="btn-start" onclick="apiCall('/start')">Start</button>
+    <button class="btn-pause" onclick="apiCall('/pause')">Pause</button>
+    <button class="btn-resume" onclick="apiCall('/resume')">Resume</button>
+    <button class="btn-stop" onclick="apiCall('/stop')">&#9632; STOP</button>
+  </div>
+</header>
+
+<div class="main">
+  <!-- LEFT: main content -->
+  <div class="left-col">
+
+    <!-- Stats row -->
+    <div class="stats-row">
+      <div class="stat-box">
+        <div class="stat-label">Iteration</div>
+        <div class="stat-value" id="stat-iter">0</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Baseline</div>
+        <div class="stat-value" id="stat-baseline">0.000</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Last Score</div>
+        <div class="stat-value" id="stat-last-score">—</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">Commit</div>
+        <div class="stat-value" style="font-size:12px" id="stat-commit">—</div>
+      </div>
+    </div>
+
+    <!-- Hypothesis -->
+    <div class="card">
+      <div class="card-title">Current Hypothesis</div>
+      <div id="hypothesis-text">Waiting for first iteration...</div>
+      <div id="hypothesis-rationale"></div>
+    </div>
+
+    <!-- Score chart -->
+    <div class="card">
+      <div class="card-title">Score Over Iterations</div>
+      <canvas id="score-chart"></canvas>
+    </div>
+
+    <!-- Subagents -->
+    <div class="card">
+      <div class="card-title">Subagents — Current Iteration</div>
+      <div class="subagent-grid" id="subagent-grid">
+        <div style="color:var(--muted);font-size:12px">No subagents yet.</div>
+      </div>
+    </div>
+
+    <!-- Integration -->
+    <div class="card integration-panel">
+      <div class="card-title">Integration / Review</div>
+      <div class="label">Summary</div>
+      <div class="value" id="integration-summary">—</div>
+      <div class="label" style="margin-top:8px">Files Touched</div>
+      <div class="value" id="integration-files">—</div>
+    </div>
+
+  </div>
+
+  <!-- RIGHT: event log -->
+  <div class="right-col">
+    <div class="card" style="flex:1">
+      <div class="card-title">Event Log</div>
+      <div id="event-log"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── State ────────────────────────────────────────────────────────────────────
+  const scores = [];
+  const subagents = {};    // id -> panel data
+  let ws = null;
+  let wsRetryDelay = 1000;
+
+  // ── WebSocket ────────────────────────────────────────────────────────────────
+  function connectWS() {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${proto}://${location.host}/events`);
+
+    ws.onopen = () => {
+      setConnStatus(true);
+      wsRetryDelay = 1000;
+      refreshState();
+    };
+
+    ws.onmessage = (e) => {
+      let evt;
+      try { evt = JSON.parse(e.data); } catch { return; }
+      if (evt.type === 'ping') return;
+      handleEvent(evt);
+      logEvent(evt);
+    };
+
+    ws.onclose = () => {
+      setConnStatus(false);
+      setTimeout(connectWS, wsRetryDelay);
+      wsRetryDelay = Math.min(wsRetryDelay * 1.5, 15000);
+    };
+
+    ws.onerror = () => ws.close();
+  }
+
+  function setConnStatus(connected) {
+    const el = document.getElementById('connection-status');
+    el.textContent = connected ? 'connected' : 'disconnected';
+    el.className = connected ? 'connected' : 'disconnected';
+  }
+
+  // ── Event handler ─────────────────────────────────────────────────────────
+  function handleEvent(evt) {
+    const d = evt.data || {};
+    const iter = evt.iteration;
+
+    switch (evt.type) {
+      case 'loop_started':
+        updateStats({ iteration: d.iteration || 0, baseline: d.baseline || 0 });
+        setStatus('running');
+        break;
+
+      case 'hypothesis_formed':
+        document.getElementById('hypothesis-text').textContent = d.hypothesis || '—';
+        document.getElementById('hypothesis-rationale').textContent = d.rationale ? `Rationale: ${d.rationale}` : '';
+        // Clear subagents for new iteration
+        Object.keys(subagents).forEach(k => delete subagents[k]);
+        renderSubagents();
+        document.getElementById('integration-summary').textContent = '—';
+        document.getElementById('integration-files').textContent = '—';
+        break;
+
+      case 'dup_rejected':
+        document.getElementById('hypothesis-text').textContent =
+          `[DUP REJECTED] ${d.hypothesis || ''} — reforming with novelty...`;
+        break;
+
+      case 'subagent_spawned':
+        subagents[d.subtask_id] = {
+          id: d.subtask_id,
+          goal: d.goal || '',
+          model: d.model || '',
+          matched_skills: d.matched_skills || [],
+          fallback: d.fallback || false,
+          status: 'spawned',
+          diff: '',
+          files: d.files_touched || [],
+        };
+        renderSubagents();
+        break;
+
+      case 'subagent_progress':
+        if (subagents[d.subtask_id]) {
+          subagents[d.subtask_id].status = 'progress';
+          subagents[d.subtask_id].step = d.step;
+          renderSubagents();
+        }
+        break;
+
+      case 'subagent_done':
+        if (subagents[d.subtask_id]) {
+          subagents[d.subtask_id].status = d.status || 'done';
+          subagents[d.subtask_id].files = d.files_touched || [];
+          renderSubagents();
+        }
+        break;
+
+      case 'review_integrate':
+        document.getElementById('integration-summary').textContent =
+          `diff ${d.diff_len || 0} chars — ${d.hypothesis || ''}`;
+        break;
+
+      case 'test_scored':
+        const scoreEl = document.getElementById('stat-last-score');
+        scoreEl.textContent = (d.score !== undefined) ? d.score.toFixed(4) : '—';
+        scoreEl.className = (d.score > (d.baseline || 0)) ? 'outcome-win' : 'outcome-mistake';
+        scores.push({ iter, score: d.score });
+        drawChart();
+        break;
+
+      case 'saved':
+        document.getElementById('stat-baseline').textContent =
+          d.score !== undefined ? d.score.toFixed(4) : '—';
+        break;
+
+      case 'memory_recorded':
+        if (iter !== null && iter !== undefined) {
+          document.getElementById('stat-iter').textContent = iter + 1;
+        }
+        break;
+
+      case 'shutdown':
+        setStatus('stopped');
+        break;
+
+      case 'paused':
+        setStatus('paused');
+        break;
+
+      case 'resumed':
+        setStatus('running');
+        break;
+    }
+  }
+
+  // ── Subagent panels ───────────────────────────────────────────────────────
+  function renderSubagents() {
+    const grid = document.getElementById('subagent-grid');
+    const entries = Object.values(subagents);
+    if (!entries.length) {
+      grid.innerHTML = '<div style="color:var(--muted);font-size:12px">No subagents yet.</div>';
+      return;
+    }
+    grid.innerHTML = entries.map(s => {
+      const statusClass = { spawned: 'spawned', progress: 'progress', success: 'success', failed: 'failed' }[s.status] || 'progress';
+      const modelTag = s.fallback
+        ? `<span class="fallback-tag">${esc(s.model)} (default fallback)</span>`
+        : `<span class="model-tag">${esc(s.model)}</span>`;
+      const skillTags = (s.matched_skills || []).map(sk => `<span class="skill-tag">${esc(sk)}</span>`).join(' ');
+      const step = s.step !== undefined ? ` — step ${s.step}` : '';
+      return `
+        <div class="subagent-panel">
+          <div class="subagent-header">
+            <span class="subagent-id">${esc(s.id.slice(0,8))}</span>
+            ${modelTag}
+            ${skillTags}
+          </div>
+          <div class="subagent-goal">${esc(s.goal)}</div>
+          <div class="subagent-status ${statusClass}">${esc(s.status)}${step}</div>
+          ${s.files.length ? `<div style="font-size:10px;color:var(--muted);margin-top:3px">${s.files.map(esc).join(', ')}</div>` : ''}
+        </div>`;
+    }).join('');
+  }
+
+  // ── Score chart ───────────────────────────────────────────────────────────
+  function drawChart() {
+    const canvas = document.getElementById('score-chart');
+    const ctx = canvas.getContext('2d');
+    canvas.width = canvas.offsetWidth;
+    canvas.height = 80;
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    if (scores.length < 2) {
+      ctx.fillStyle = '#4a5568';
+      ctx.font = '11px monospace';
+      ctx.fillText('Waiting for data...', 10, H / 2);
+      return;
+    }
+
+    const vals = scores.map(s => s.score);
+    const minV = Math.min(...vals);
+    const maxV = Math.max(...vals, minV + 0.001);
+    const pad = { t: 8, b: 8, l: 8, r: 8 };
+    const iW = W - pad.l - pad.r;
+    const iH = H - pad.t - pad.b;
+
+    const x = (i) => pad.l + (i / (scores.length - 1)) * iW;
+    const y = (v) => pad.t + (1 - (v - minV) / (maxV - minV)) * iH;
+
+    // Grid line at max
+    ctx.strokeStyle = '#2d3748';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(pad.l, pad.t);
+    ctx.lineTo(pad.l + iW, pad.t);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Area fill
+    const grad = ctx.createLinearGradient(0, pad.t, 0, H - pad.b);
+    grad.addColorStop(0, 'rgba(72,187,120,0.3)');
+    grad.addColorStop(1, 'rgba(72,187,120,0.0)');
+    ctx.beginPath();
+    ctx.moveTo(x(0), y(vals[0]));
+    for (let i = 1; i < scores.length; i++) ctx.lineTo(x(i), y(vals[i]));
+    ctx.lineTo(x(scores.length - 1), H - pad.b);
+    ctx.lineTo(x(0), H - pad.b);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Line
+    ctx.beginPath();
+    ctx.moveTo(x(0), y(vals[0]));
+    for (let i = 1; i < scores.length; i++) ctx.lineTo(x(i), y(vals[i]));
+    ctx.strokeStyle = '#48bb78';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    // Last dot
+    const lastX = x(scores.length - 1), lastY = y(vals[vals.length - 1]);
+    ctx.beginPath();
+    ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
+    ctx.fillStyle = '#48bb78';
+    ctx.fill();
+  }
+
+  // ── Event log ─────────────────────────────────────────────────────────────
+  function logEvent(evt) {
+    const log = document.getElementById('event-log');
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    const ts = evt.ts ? evt.ts.slice(11, 19) : '—';
+    const data = JSON.stringify(evt.data || {}).slice(0, 80);
+    entry.innerHTML = `
+      <span class="log-ts">${esc(ts)}</span>
+      <span class="log-type ${esc(evt.type)}">${esc(evt.type)}</span>
+      <span class="log-data">${esc(data)}</span>`;
+    log.prepend(entry);
+    // Keep max 200 entries
+    while (log.children.length > 200) log.removeChild(log.lastChild);
+  }
+
+  // ── Status pill ───────────────────────────────────────────────────────────
+  function setStatus(s) {
+    const pill = document.getElementById('status-pill');
+    pill.textContent = s;
+    pill.className = `status-pill ${s}`;
+  }
+
+  function updateStats({ iteration, baseline, commit }) {
+    if (iteration !== undefined) document.getElementById('stat-iter').textContent = iteration;
+    if (baseline !== undefined) document.getElementById('stat-baseline').textContent = baseline.toFixed(4);
+    if (commit !== undefined) document.getElementById('stat-commit').textContent = commit || '—';
+  }
+
+  // ── API calls ─────────────────────────────────────────────────────────────
+  async function apiCall(path) {
+    try {
+      const r = await fetch(path, { method: 'POST' });
+      const j = await r.json();
+      console.log(path, j);
+    } catch (e) {
+      console.error(path, e);
+    }
+  }
+
+  async function refreshState() {
+    try {
+      const r = await fetch('/state');
+      const j = await r.json();
+      updateStats({ iteration: j.iteration, baseline: j.baseline_score, commit: j.working_commit });
+      if (j.current_hypothesis) {
+        document.getElementById('hypothesis-text').textContent = j.current_hypothesis;
+      }
+      setStatus(j.running ? (j.paused ? 'paused' : 'running') : 'stopped');
+    } catch {}
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  function esc(s) {
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  window.addEventListener('resize', drawChart);
+
+  // Boot
+  connectWS();
+  refreshState();
+</script>
+</body>
+</html>
