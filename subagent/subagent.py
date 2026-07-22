@@ -98,30 +98,40 @@ SYSTEM_PROMPT = """You are a software engineering subagent. Your workspace is an
 
 Step 1 — ALWAYS start by listing files:
   Call run_shell with command="find . -type f | grep -v .git | sort | head -80"
-  Do NOT skip this step. The workspace listing in your brief may be outdated.
+  Do NOT skip this step.
 
 Step 2 — Read the relevant file(s):
-  Call read_file with the path you want to inspect (relative to workspace root).
+  Call read_file with the exact path from Step 1. Read every file you plan to change.
 
 Step 3 — Make the change:
-  Call write_file with the COMPLETE new content of the file.
-  Never truncate or summarise — you must output every single line of the file.
+  Option A (surgical): Call edit_file with old_string=<exact text to replace> and new_string=<replacement>.
+    - old_string MUST appear verbatim in the file (copy it directly from the read_file output).
+    - new_string MUST be genuinely different from old_string — do not copy old_string as new_string.
+  Option B (full rewrite): Call write_file with the COMPLETE new content of the file.
+    - Never truncate — output every single line.
 
-Step 4 — Verify:
+Step 3.5 — Confirm the change:
+  Call read_file on the same path again and verify the new code is actually there.
+  If the file looks identical to before, your new_string was the same as old_string —
+  you must try again with a DIFFERENT new_string that actually implements the change.
+
+Step 4 — Verify with git:
   Call run_shell with command="git diff HEAD --stat"
-  IMPORTANT: write_file writes to disk but does NOT stage changes, so plain
-  "git diff --stat" always shows nothing. You MUST use "git diff HEAD --stat"
-  which compares the working tree against the HEAD commit.
-  If the stat shows no changed files, your write failed — check the path and retry.
+  NOTE: writes go to disk but are NOT staged, so "git diff --stat" shows nothing.
+  You MUST use "git diff HEAD --stat" which compares the working tree to HEAD.
+  - If it shows changed files → your edit landed correctly, proceed to Step 5.
+  - If it shows nothing → the new content was identical to HEAD (no-op). Go back to Step 3
+    and write ACTUALLY DIFFERENT code. Do NOT give up — try a different approach.
 
 Step 5 — Signal completion:
-  If you made at least one file change: respond with exactly DONE — <brief summary of what changed>
-  If the task is impossible: respond with exactly FAILED — <reason>
+  If you made at least one real file change: respond with exactly DONE — <brief summary of what changed>
+  If the task is genuinely impossible after multiple attempts: respond with exactly FAILED — <reason>
 
 ## Rules
 - Only use paths that appeared in the Step 1 listing.
 - Do NOT call run_tests or save_to_github — those are coordinator-only.
-- Make real code changes. Do not stop without editing at least one file.
+- If git diff is empty after your edit, DO NOT report FAILED — try a different change.
+- Make real, substantive code changes. Never report DONE without a non-empty git diff.
 """
 
 
@@ -483,22 +493,31 @@ class Subagent:
             if upper.startswith("DONE"):
                 diff = await self.get_diff()
                 files_touched = self._extract_touched_files(diff) or files_touched
-                if not diff.strip() and tool_calls_total == 0:
-                    # Model said DONE without doing anything — push back
+                if not diff.strip():
+                    # Model said DONE without producing any real diff — push back.
+                    # This covers both "no tool calls at all" and "tool calls that were
+                    # all no-ops" (e.g. edit_file where new_string == old_string).
                     logger.warning(
-                        "Subagent %s said DONE but made no tool calls and no diff — pushing back",
-                        self.brief.id[:8],
+                        "Subagent %s said DONE but git diff is empty (tool_calls=%d) — pushing back",
+                        self.brief.id[:8], tool_calls_total,
                     )
                     conversation.append(ChatMessage(role="assistant", content=content))
-                    conversation.append(ChatMessage(
-                        role="user",
-                        content=(
+                    if tool_calls_total == 0:
+                        pushback = (
                             "You said DONE but have not made any changes yet. "
                             "You MUST call run_shell first to list files, then read_file to inspect "
-                            "the target file, then write_file to modify it. "
+                            "the target file, then write_file or edit_file to modify it. "
                             "Start over from Step 1."
-                        ),
-                    ))
+                        )
+                    else:
+                        pushback = (
+                            "You said DONE but git diff HEAD --stat shows no changes. "
+                            "Your edits were no-ops — the new content is identical to the original. "
+                            "Read the file again with read_file, then call edit_file with a "
+                            "new_string that is GENUINELY DIFFERENT from old_string. "
+                            "Make a real, substantive code change."
+                        )
+                    conversation.append(ChatMessage(role="user", content=pushback))
                     continue
 
                 summary = content[4:].strip(" —:-") or "Task completed."
