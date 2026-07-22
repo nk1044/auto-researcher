@@ -55,8 +55,8 @@ summary_every_n:   5       # regenerate rolling summary every N steps
 # === Sandbox ===
 sandbox:
   max_cpu_seconds: 120
-  max_memory_mb:   512
-  timeout_seconds: 300
+  max_memory_mb:   0     # 0 = no virtual-memory cap (training processes need several GB)
+  timeout_seconds: 660   # must exceed test.py TIMEOUT_SECONDS (600 s) by a safe margin
 
 # === Persistence ===
 data_dir: "./data"   # episodic.db, state.db, semantic_db/ will be created here

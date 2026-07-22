@@ -468,6 +468,17 @@ class Coordinator:
             messages = build_integration_messages(hyp.text, ok_results)
             messages_typed = [ChatMessage(role=m["role"], content=m["content"]) for m in messages]
 
+            # Inject current file state so the integration LLM sees what it's merging into
+            if file_slices:
+                file_context = "\n\n## Current File State (for reference when resolving conflicts)\n"
+                file_context += "\n".join(
+                    f"### {p}\n```\n{c[:800]}\n```" for p, c in file_slices.items()
+                )
+                messages_typed[-1] = ChatMessage(
+                    role=messages_typed[-1].role,
+                    content=messages_typed[-1].content + file_context,
+                )
+
             response = await self.client.chat(
                 model_spec=self.client.registry.coordinator,
                 messages=messages_typed,
@@ -574,9 +585,10 @@ class Coordinator:
                 meta={"hypothesis": hyp.text, "score": score},
             )
             if result.success:
+                branch = result.value.get("branch", "") if isinstance(result.value, dict) else ""
                 await aemit(
                     EventType.SAVED,
-                    {"branch": result.value.get("branch", ""), "score": score},
+                    {"branch": branch, "score": score},
                     iteration=iteration,
                 )
                 logger.info("Saved to GitHub: %s", result.value)

@@ -67,24 +67,20 @@ def _parse_text_tool_call(content: str) -> dict | None:
         except (json.JSONDecodeError, ValueError):
             pass
 
-    # 2. Any JSON object in the text that has both "name" and "arguments"
-    for match in re.finditer(r"\{", content):
-        start = match.start()
-        depth = 0
-        for i, ch in enumerate(content[start:], start):
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    candidate = content[start : i + 1]
-                    try:
-                        data = json.loads(candidate)
-                        if isinstance(data, dict) and "name" in data and "arguments" in data:
-                            return data
-                    except (json.JSONDecodeError, ValueError):
-                        pass
-                    break
+    # 2. Scan for any JSON object using raw_decode (handles nested braces and } inside strings)
+    decoder = json.JSONDecoder()
+    pos = 0
+    while pos < len(content):
+        idx = content.find("{", pos)
+        if idx == -1:
+            break
+        try:
+            data, _ = decoder.raw_decode(content, idx)
+            if isinstance(data, dict) and "name" in data and "arguments" in data:
+                return data
+            pos = idx + 1
+        except (json.JSONDecodeError, ValueError):
+            pos = idx + 1
 
     return None
 
@@ -226,11 +222,24 @@ class Subagent:
         await proc.communicate()
 
     async def get_diff(self) -> str:
-        """Return the unified diff of changes made in this worktree."""
+        """Return the unified diff of changes made in this worktree.
+
+        Stage all changes first (git add -A) so that new files created by
+        write_file (which are untracked) are included in the diff.
+        """
         if not self._worktree_path:
             return ""
+        # Stage everything including new/untracked files
+        add_proc = await asyncio.create_subprocess_exec(
+            "git", "add", "-A",
+            cwd=self._worktree_path,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await add_proc.communicate()
+
         proc = await asyncio.create_subprocess_exec(
-            "git", "diff", "HEAD",
+            "git", "diff", "--cached",
             cwd=self._worktree_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -378,7 +387,14 @@ class Subagent:
             # qwen2.5 and similar models output tool-call JSON as markdown text
             # rather than using Ollama's structured tool-call API.  Parse and
             # execute so the loop actually makes progress.
-            parsed_tc = _parse_text_tool_call(content) if content else None
+            # Skip parsing if the content is a terminal signal (DONE / FAILED) so
+            # the terminal handler below fires correctly.
+            _upper = content.upper().lstrip()
+            parsed_tc = (
+                _parse_text_tool_call(content)
+                if content and not _upper.startswith("DONE") and not _upper.startswith("FAILED")
+                else None
+            )
             if parsed_tc:
                 name = parsed_tc.get("name", "")
                 args = parsed_tc.get("arguments", {})

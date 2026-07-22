@@ -9,6 +9,7 @@ Score formula: 1.0 / (1.0 + final_val_loss)  →  lower loss = higher score, ran
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import subprocess
@@ -105,6 +106,9 @@ def run_tests(workspace: str) -> dict:
         losses = _run_and_get_final_loss(project_dir)
         train_loss = losses["final_train_loss"]
         val_loss = losses["final_val_loss"]
+
+        if not math.isfinite(val_loss) or val_loss < 0:
+            return {"score": 0.0, "remark": f"invalid val_loss={val_loss} (nan/inf/negative) — treating as failure"}
 
         # Map val loss to (0, 1]: lower loss → score closer to 1
         score = 1.0 / (1.0 + val_loss)

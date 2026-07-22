@@ -95,7 +95,7 @@ def assemble_subagent_context(
     if workspace and scope_paths:
         # Resolve each scope path relative to the workspace
         resolved: list[tuple[str, str]] = []
-        ws_files_set = set(_list_workspace_files(workspace))
+        ws_files_set = set(ws_files) if workspace else set()
         for rel_path in scope_paths:
             full = str(Path(workspace) / rel_path)
             if rel_path in ws_files_set:

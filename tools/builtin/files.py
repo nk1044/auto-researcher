@@ -132,8 +132,10 @@ def edit_file(workspace: str, path: str, old_string: str, new_string: str) -> di
     new_text = text.replace(old_string, new_string, 1)
     target.write_text(new_text, encoding="utf-8")
     ws = Path(workspace).resolve()
+    patched = str(target.relative_to(ws))
     return {
-        "patched": str(target.relative_to(ws)),
+        "written": patched,              # matches files_touched tracker in subagent.py
+        "patched": patched,
         "old_lines": old_string.count("\n") + 1,
         "new_lines": new_string.count("\n") + 1,
     }
