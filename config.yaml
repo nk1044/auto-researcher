@@ -52,8 +52,10 @@ subagent_context_ratios:
 subagent_step_cap: 20      # max ReAct steps per subagent
 summary_every_n:   5       # regenerate rolling summary every N steps
 
-# === Fix loop ===
-max_fix_attempts: 10   # max times coordinator retries a failing hypothesis via a fix subagent
+# === Inner loop ===
+# The inner loop runs until the coordinator LLM is satisfied (or this safety cap is hit).
+# Each inner attempt: full decompose → dispatch → integrate → test cycle.
+max_inner_iterations: 20   # safety cap; coordinator decides earlier via LLM judgment
 
 # === Sandbox ===
 sandbox:

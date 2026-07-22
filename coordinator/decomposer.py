@@ -6,9 +6,9 @@ import json
 import logging
 import re
 import uuid
-from typing import Any
+from typing import Any, Optional
 
-from shared.types import Hypothesis, SubtaskBrief
+from shared.types import ExplorationResult, Hypothesis, SubtaskBrief
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,8 @@ Files in repo:
 Current file contents (read these carefully before assigning scope):
 {file_contents}
 
+{exploration_section}
+{fix_section}
 Decompose this hypothesis into {max_subagents_max} or fewer independent subtasks.
 - scope must list the exact file paths the subagent should edit (from the file listing above).
 - Use the file contents to understand what each file does and assign scope accurately.
@@ -54,12 +56,10 @@ Remember: subtasks run in parallel and cannot share context."""
 
 def _extract_json(text: str) -> dict:
     """Extract first JSON object from model output."""
-    # Try direct parse first
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    # Find JSON block
     match = re.search(r"\{[\s\S]*\}", text)
     if match:
         try:
@@ -101,6 +101,9 @@ def make_decompose_messages(
     file_listing: str,
     max_subagents: int,
     file_slices: dict[str, str] | None = None,
+    exploration: Optional[ExplorationResult] = None,
+    fix_attempt: int = 0,
+    prev_remark: Optional[str] = None,
 ) -> list[dict[str, str]]:
     """Build the messages list for the decompose LLM call."""
     if file_slices:
@@ -110,6 +113,25 @@ def make_decompose_messages(
         file_contents = "\n\n".join(contents_parts)
     else:
         file_contents = "(no file contents available)"
+
+    exploration_section = ""
+    if exploration:
+        exploration_section = (
+            f"## Project Architecture (from explorer subagents)\n\n"
+            f"### Structure\n{exploration.architecture[:600]}\n\n"
+            f"### Test Mechanism\n{exploration.test_structure[:400]}\n\n"
+            f"### Key Patterns\n{exploration.key_patterns[:400]}\n\n"
+        )
+
+    fix_section = ""
+    if fix_attempt > 0 and prev_remark:
+        fix_section = (
+            f"## Previous Attempt Failed (inner attempt #{fix_attempt})\n\n"
+            f"The previous decomposition and implementation did NOT pass the test.\n"
+            f"Error/remark from test:\n```\n{prev_remark[:800]}\n```\n\n"
+            f"Decompose DIFFERENTLY this time — target different files, fix the specific "
+            f"error above, or try a completely different implementation approach.\n\n"
+        )
 
     return [
         {
@@ -123,6 +145,8 @@ def make_decompose_messages(
                 repo_path=repo_path,
                 file_listing=file_listing,
                 file_contents=file_contents,
+                exploration_section=exploration_section,
+                fix_section=fix_section,
                 max_subagents_max=max_subagents,
             ),
         },

@@ -36,6 +36,10 @@ class EventType(str, Enum):
     PERMISSION_REQUEST = "permission_request"
     PERMISSION_GRANTED = "permission_granted"
     PERMISSION_DENIED = "permission_denied"
+    EXPLORATION_STARTED = "exploration_started"
+    EXPLORATION_DONE = "exploration_done"
+    INNER_LOOP_CONTINUE = "inner_loop_continue"
+    INNER_LOOP_EXIT = "inner_loop_exit"
 
 
 @dataclass
