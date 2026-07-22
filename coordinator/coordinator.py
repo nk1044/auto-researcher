@@ -262,7 +262,7 @@ class Coordinator:
         )
         failures = await self.memory.top_failures("improvement hypothesis", k=5)
         best_wins = await self.memory.get_best_wins(k=3)
-        file_slices = self._load_file_slices(max_files=8)
+        file_slices = self._load_file_slices(max_files=20, chars_per_file=4000)
 
         context = assemble_coordinator_context(
             task_spec=self._task_spec(),
@@ -360,11 +360,15 @@ class Coordinator:
         """Ask coordinator model to decompose hypothesis into subtask briefs."""
         from models.client import ChatMessage
 
-        file_listing = self._list_repo_files(max_files=50)
+        file_listing = self._list_repo_files(max_files=200)
+        # Pass actual file contents so the decomposer knows what each file does
+        # and can assign accurate scope paths to each subtask.
+        file_slices = self._load_file_slices(max_files=20, chars_per_file=1500)
         messages_raw = make_decompose_messages(
             hypothesis=hyp,
             repo_path=self.repo_path,
             file_listing=file_listing,
+            file_slices=file_slices,
             max_subagents=self.max_subagents,
         )
         messages = [ChatMessage(role=m["role"], content=m["content"]) for m in messages_raw]
@@ -692,11 +696,26 @@ class Coordinator:
 
     _CODE_EXTS = {
         ".py", ".js", ".ts", ".java", ".cpp", ".c", ".go",
-        ".rs", ".rb", ".swift", ".kt", ".cs", ".md",
+        ".rs", ".rb", ".swift", ".kt", ".cs", ".md", ".yaml", ".toml",
     }
 
-    def _load_file_slices(self, max_files: int = 8) -> dict[str, str]:
-        """Load the most recently modified code files from the target repo."""
+    # Directories that are never part of the project's own source code.
+    _SKIP_DIRS = {
+        ".git", ".venv", "venv", "__pycache__", "node_modules",
+        ".tox", ".mypy_cache", ".pytest_cache", "dist", "build",
+        "site-packages", ".eggs", "*.egg-info",
+    }
+
+    def _is_project_file(self, path: Path, repo: Path) -> bool:
+        """Return True if path is a genuine project source file (not venv/cache/etc)."""
+        return not any(part in self._SKIP_DIRS for part in path.relative_to(repo).parts)
+
+    def _load_file_slices(self, max_files: int = 20, chars_per_file: int = 4000) -> dict[str, str]:
+        """Load code files from the target repo, skipping venv/cache directories.
+
+        Reads ALL project source files (up to max_files), so the coordinator sees
+        the full current implementation rather than randomly mtime-ordered fragments.
+        """
         repo = Path(self.repo_path)
         if not repo.exists():
             return {}
@@ -705,29 +724,31 @@ class Coordinator:
                 f for f in repo.rglob("*")
                 if f.is_file()
                 and f.suffix in self._CODE_EXTS
-                and ".git" not in f.parts
+                and self._is_project_file(f, repo)
             ],
-            key=lambda p: p.stat().st_mtime,
+            key=lambda p: p.stat().st_size,  # largest (most complex) files first
             reverse=True,
         )
         slices: dict[str, str] = {}
         for f in code_files[:max_files]:
             try:
-                slices[str(f.relative_to(repo))] = f.read_text(
-                    encoding="utf-8", errors="replace"
-                )[:2000]
+                content = f.read_text(encoding="utf-8", errors="replace")
+                rel = str(f.relative_to(repo))
+                slices[rel] = content[:chars_per_file] + (
+                    f"\n... [truncated at {chars_per_file} chars]" if len(content) > chars_per_file else ""
+                )
             except OSError:
                 pass
         return slices
 
-    def _list_repo_files(self, max_files: int = 80) -> str:
-        """Return a full directory tree of the target repo (dirs + code files)."""
+    def _list_repo_files(self, max_files: int = 200) -> str:
+        """Return a directory listing of the target repo (project files only)."""
         repo = Path(self.repo_path)
         if not repo.exists():
             return "(repo not found)"
         lines: list[str] = []
         for path in sorted(repo.rglob("*")):
-            if ".git" in path.parts:
+            if not self._is_project_file(path, repo):
                 continue
             rel = path.relative_to(repo)
             if path.is_dir():

@@ -12,6 +12,7 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -38,7 +39,17 @@ def _run_and_get_final_loss(project_dir: str, timeout: int = TIMEOUT_SECONDS) ->
     Raises:
         RuntimeError if the process fails or no [eval] lines are found.
     """
-    python_exe = Path(DEFAULT_PROJECT_DIR) / ".venv" / "bin" / "python"
+    # Copy gitignored data files that the project needs but aren't in the worktree.
+    # input.txt is the training corpus — it's in .gitignore so git worktree add skips it.
+    src_root = Path(DEFAULT_PROJECT_DIR)
+    dst_root = Path(project_dir)
+    for data_file in ["input.txt"]:
+        src = src_root / data_file
+        dst = dst_root / data_file
+        if src.exists() and not dst.exists():
+            shutil.copy2(str(src), str(dst))
+
+    python_exe = src_root / ".venv" / "bin" / "python"
     if python_exe.exists():
         cmd = [str(python_exe), "main.py"]
     else:

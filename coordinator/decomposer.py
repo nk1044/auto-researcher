@@ -40,10 +40,15 @@ DECOMPOSE_USER = """Hypothesis: {hypothesis}
 
 Target repository: {repo_path}
 
-Relevant files in repo:
+Files in repo:
 {file_listing}
 
+Current file contents (read these carefully before assigning scope):
+{file_contents}
+
 Decompose this hypothesis into {max_subagents_max} or fewer independent subtasks.
+- scope must list the exact file paths the subagent should edit (from the file listing above).
+- Use the file contents to understand what each file does and assign scope accurately.
 Remember: subtasks run in parallel and cannot share context."""
 
 
@@ -95,8 +100,17 @@ def make_decompose_messages(
     repo_path: str,
     file_listing: str,
     max_subagents: int,
+    file_slices: dict[str, str] | None = None,
 ) -> list[dict[str, str]]:
     """Build the messages list for the decompose LLM call."""
+    if file_slices:
+        contents_parts = []
+        for path, content in file_slices.items():
+            contents_parts.append(f"### {path}\n```\n{content}\n```")
+        file_contents = "\n\n".join(contents_parts)
+    else:
+        file_contents = "(no file contents available)"
+
     return [
         {
             "role": "system",
@@ -107,7 +121,8 @@ def make_decompose_messages(
             "content": DECOMPOSE_USER.format(
                 hypothesis=hypothesis.text,
                 repo_path=repo_path,
-                file_listing=file_listing[:2000],
+                file_listing=file_listing,
+                file_contents=file_contents,
                 max_subagents_max=max_subagents,
             ),
         },
