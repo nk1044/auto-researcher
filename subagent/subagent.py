@@ -110,7 +110,12 @@ Step 3 — Make the change:
   Option B (full rewrite): Call write_file with the COMPLETE new content of the file.
     - Never truncate — output every single line.
 
-Step 3.5 — Confirm the change:
+Step 3.5 — Verify syntax:
+  Call run_shell with command="python3 -m py_compile <filename>"
+  If it reports a SyntaxError, read the file again and fix the syntax error before continuing.
+  This step is mandatory after every file edit.
+
+Step 3.7 — Confirm the change:
   Call read_file on the same path again and verify the new code is actually there.
   If the file looks identical to before, your new_string was the same as old_string —
   you must try again with a DIFFERENT new_string that actually implements the change.
@@ -148,6 +153,7 @@ class Subagent:
         tools: "ToolRuntime",
         memory: "Memory",
         config: dict[str, Any],
+        existing_workspace: Optional[str] = None,
     ) -> None:
         self.brief = brief
         self.baseline_commit = baseline_commit
@@ -157,6 +163,7 @@ class Subagent:
         self.tools = tools
         self.memory = memory
         self.config = config
+        self._existing_workspace = existing_workspace
 
         self.step_cap: int = config.get("subagent_step_cap", 20)
         self.summary_every_n: int = config.get("summary_every_n", 5)
@@ -185,7 +192,10 @@ class Subagent:
         )
 
         try:
-            self._worktree_path = await self._create_worktree()
+            if self._existing_workspace:
+                self._worktree_path = self._existing_workspace
+            else:
+                self._worktree_path = await self._create_worktree()
             result = await self._react_loop()
             return result
         except Exception as exc:
@@ -221,6 +231,8 @@ class Subagent:
 
     async def remove_worktree(self) -> None:
         """Remove worktree when coordinator is done with it."""
+        if self._existing_workspace:
+            return  # coordinator manages this worktree
         if not self._worktree_path:
             return
         proc = await asyncio.create_subprocess_exec(

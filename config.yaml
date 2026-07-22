@@ -52,6 +52,9 @@ subagent_context_ratios:
 subagent_step_cap: 20      # max ReAct steps per subagent
 summary_every_n:   5       # regenerate rolling summary every N steps
 
+# === Fix loop ===
+max_fix_attempts: 10   # max times coordinator retries a failing hypothesis via a fix subagent
+
 # === Sandbox ===
 sandbox:
   max_cpu_seconds: 120

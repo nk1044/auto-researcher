@@ -130,6 +130,25 @@ class Coordinator:
     async def run(self) -> None:
         """The infinite loop. Never returns until stop_requested is set."""
         await self._load_state()
+
+        # Always measure the real baseline on the unmodified repo if it is zero.
+        # baseline=0 can mean "never measured" (first run) or "carried over from a
+        # broken previous run" — in either case we want the true score before we start
+        # comparing agent changes against it.
+        if self.baseline == 0.0:
+            logger.info("Baseline is 0 — measuring on original repo at %s …", self.repo_path)
+            real_baseline, remark = await self._run_test(self.repo_path)
+            if real_baseline > 0.0:
+                self.baseline = real_baseline
+                self.state.baseline_score = real_baseline
+                self.memory.save_state(self.state)
+                logger.info("Baseline established: %.4f (%s)", real_baseline, remark)
+            else:
+                logger.warning(
+                    "Original repo scored 0 — check that DEFAULT_PROJECT_DIR in test.py "
+                    "is correct and that the project runs standalone. Remark: %s", remark
+                )
+
         await aemit(
             EventType.LOOP_STARTED,
             {"baseline": self.baseline, "iteration": self.state.iteration},
@@ -206,7 +225,7 @@ class Coordinator:
         # 5. Review + integrate
         integrated = await self.review_and_integrate(hyp, ok_results)
 
-        # 6. Test once
+        # 6. Test — then fix-loop if there's a runtime/syntax error
         await aemit(EventType.REVIEW_INTEGRATE, {"hypothesis": hyp.text, "diff_len": len(integrated.diff)}, iteration=n)
         score, remark = await self._run_test(integrated.path)
         await aemit(
@@ -214,6 +233,64 @@ class Coordinator:
             {"score": score, "remark": remark, "baseline": self.baseline},
             iteration=n,
         )
+
+        max_fix_attempts: int = self.config.get("max_fix_attempts", 3)
+        fix_history: list[dict] = []
+
+        fix_attempt = 0
+        while score <= self.baseline and fix_attempt < max_fix_attempts:
+            error_info = self._parse_test_error(remark)
+            if not error_info:
+                break  # not a fixable runtime/syntax error
+            if not integrated.diff.strip():
+                break  # nothing was changed — no point fixing
+
+            fix_history.append({
+                "attempt": fix_attempt + 1,
+                "exc_type": error_info["exc_type"],
+                "exc_msg": error_info["exc_msg"],
+                "files": error_info["failing_files"],
+            })
+            await aemit(
+                EventType.FIX_ATTEMPT,
+                {
+                    "attempt": fix_attempt + 1,
+                    "max": max_fix_attempts,
+                    "exc_type": error_info["exc_type"],
+                    "files": error_info["failing_files"],
+                    "hypothesis": hyp.text[:80],
+                },
+                iteration=n,
+            )
+            logger.info(
+                "Fix attempt %d/%d for %s: %s in %s",
+                fix_attempt + 1, max_fix_attempts, hyp.text[:60],
+                error_info["exc_type"], error_info["failing_files"],
+            )
+
+            fix_brief = self._create_fix_brief(hyp, error_info, fix_attempt)
+            await self._dispatch_fix_subagents([fix_brief], integrated.path)
+
+            score, remark = await self._run_test(integrated.path)
+            await aemit(
+                EventType.TEST_SCORED,
+                {
+                    "score": score,
+                    "remark": remark,
+                    "baseline": self.baseline,
+                    "fix_attempt": fix_attempt + 1,
+                },
+                iteration=n,
+            )
+            fix_attempt += 1
+
+        # Augment remark with fix history so memory knows exactly what was tried
+        if fix_history:
+            attempts_text = "; ".join(
+                f"attempt {e['attempt']}: {e['exc_type']} in {e['files']}"
+                for e in fix_history
+            )
+            remark = f"{remark or ''} | Fix loop ({fix_attempt} attempt(s)): {attempts_text}"
 
         # 7. Record
         outcome = OutcomeType.WIN if score > self.baseline else OutcomeType.MISTAKE
@@ -779,6 +856,85 @@ class Coordinator:
             return "(none yet)"
         top = best_wins[0]
         return f'score={top.score:.4f}: "{top.text}"'
+
+    def _parse_test_error(self, remark: str | None) -> dict | None:
+        """Parse a Python traceback from the test remark.
+
+        Returns a dict with exc_type, exc_msg, failing_files, and traceback if a
+        runtime/syntax exception is detected; otherwise returns None.
+        """
+        if not remark:
+            return None
+        # Find File lines in traceback (from worktrees, not venv)
+        file_lines = re.findall(r'File "([^"]+)", line (\d+)', remark)
+        project_files = [
+            Path(f).name
+            for f, _ in file_lines
+            if "worktrees/" in f and ".venv/" not in f
+        ]
+        # Find exception type and message
+        exc_match = re.search(r'^(\w+(?:Error|Exception)): (.+)$', remark, re.MULTILINE)
+        if not exc_match:
+            return None  # not a Python exception — likely a conceptual failure
+        exc_type = exc_match.group(1)
+        exc_msg = exc_match.group(2)[:300]
+        return {
+            "exc_type": exc_type,
+            "exc_msg": exc_msg,
+            "failing_files": list(dict.fromkeys(project_files)),  # deduped, ordered
+            "traceback": remark[-1500:],
+        }
+
+    def _create_fix_brief(self, hyp: Hypothesis, error_info: dict, attempt: int) -> SubtaskBrief:
+        """Create a fix subtask brief targeting the failing files in the integration worktree."""
+        files = error_info.get("failing_files", [])
+        goal = (
+            f"Fix a bug introduced while implementing: '{hyp.text[:120]}'\n\n"
+            f"Error ({error_info['exc_type']}): {error_info['exc_msg']}\n\n"
+            f"Traceback:\n{error_info['traceback']}\n\n"
+            f"The hypothesis changes are ALREADY applied in your workspace. "
+            f"Read the failing file(s), find the bug, and fix it WITHOUT reverting the "
+            f"original hypothesis change. Fix only the bug — preserve the intent."
+        )
+        return SubtaskBrief(
+            hypothesis_id=hyp.id,
+            goal=goal,
+            scope=files,
+            constraints=(
+                "ONLY fix the specific bug. Do NOT revert the hypothesis changes. "
+                "Do NOT modify test files or input.txt."
+            ),
+            expected_output=f"Fixed code in {', '.join(files)} that runs without errors.",
+            required_skills=["code", "debug"],
+        )
+
+    async def _dispatch_fix_subagents(
+        self, briefs: list[SubtaskBrief], workspace: str
+    ) -> list[SubtaskResult]:
+        """Run fix subagents sequentially in the existing integration worktree."""
+        from subagent.subagent import Subagent
+
+        results = []
+        for brief in briefs:
+            model_spec, matched, fallback = self.router.select(brief.required_skills)
+            brief.model = model_spec
+            brief.matched_skills = matched
+            brief.fallback = fallback
+            async with self._sem:
+                agent = Subagent(
+                    brief=brief,
+                    baseline_commit=self.state.working_commit,
+                    repo_path=self.repo_path,
+                    worktree_root=self.worktree_root,
+                    client=self.client,
+                    tools=self.tools,
+                    memory=self.memory,
+                    config=self.config,
+                    existing_workspace=workspace,
+                )
+                result = await agent.run()
+                results.append(result)
+        return results
 
     def pause(self) -> None:
         self.pause_gate.clear()
