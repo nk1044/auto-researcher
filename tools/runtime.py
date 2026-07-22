@@ -200,8 +200,9 @@ class ToolRuntime:
             kwargs = payload.get("kwargs", {{}})
 
             resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit, cpu_limit))
-            mem_bytes = mem_mb * 1024 * 1024
-            resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
+            if mem_mb > 0:
+                mem_bytes = mem_mb * 1024 * 1024
+                resource.setrlimit(resource.RLIMIT_AS, (mem_bytes, mem_bytes))
 
             try:
                 source_file = {source_file!r}

@@ -75,10 +75,12 @@ def assemble_subagent_context(
         ws_files = _list_workspace_files(workspace)
         listing = "\n".join(ws_files[:100])
         brief_text += (
-            f"\n## Actual Workspace Files (USE THESE EXACT PATHS)\n"
+            f"\n## Actual Workspace Path\n"
+            f"{workspace}\n"
+            f"\n## Actual Workspace Files (use ONLY these exact relative paths)\n"
             f"{listing}\n"
-            f"\nNOTE: The suggested scope above may be inaccurate. "
-            f"Always use file paths from the list above."
+            f"\nThe scope files listed above are pre-loaded in '## In-Scope File Contents' below. "
+            f"Read them there — do NOT call read_file for files already shown."
         )
 
     if tool_schemas:
@@ -91,7 +93,7 @@ def assemble_subagent_context(
     if workspace and scope_paths:
         # Resolve each scope path relative to the workspace
         resolved: list[tuple[str, str]] = []
-        ws_files_set = set(_list_workspace_files(workspace))
+        ws_files_set = set(ws_files) if workspace else set()
         for rel_path in scope_paths:
             full = str(Path(workspace) / rel_path)
             if rel_path in ws_files_set:

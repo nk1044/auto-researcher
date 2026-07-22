@@ -98,6 +98,15 @@ class MemoryEntry:
 
 
 @dataclass
+class ExplorationResult:
+    """Structured understanding of the target project, assembled by parallel explorer subagents."""
+    architecture: str = ""      # module structure, data flows, entry points
+    test_structure: str = ""    # what tests measure, how scoring works
+    key_patterns: str = ""      # algorithms, bottlenecks, coding conventions
+    key_files: list[str] = field(default_factory=list)
+
+
+@dataclass
 class AgentState:
     iteration: int = 0
     baseline_score: float = 0.0

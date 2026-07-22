@@ -88,6 +88,18 @@ def load_config(path: str = "config.yaml") -> dict[str, Any]:
         logger.error("models.coordinator is required in config.yaml")
         sys.exit(1)
 
+    prompt_file = cfg.get("system_prompt_file", "")
+    if not prompt_file:
+        logger.error(
+            "system_prompt_file is required in config.yaml — "
+            "create a plain-text file with the research goal and set the path here."
+        )
+        sys.exit(1)
+    prompt_path = Path(prompt_file) if Path(prompt_file).is_absolute() else Path.cwd() / prompt_file
+    if not prompt_path.exists():
+        logger.error("system_prompt_file not found: %s", prompt_path.resolve())
+        sys.exit(1)
+
     _cap_max_subagents(cfg)
     return cfg
 
@@ -202,7 +214,9 @@ def main() -> None:
         if args.autostart:
             import server.app as server_app
             if server_app._coordinator is not None:
-                asyncio.create_task(server_app._coordinator.run())
+                server_app._coordinator_task = asyncio.create_task(
+                    server_app._coordinator.run()
+                )
 
     server_cfg = config.get("server", {})
     uvicorn.run(

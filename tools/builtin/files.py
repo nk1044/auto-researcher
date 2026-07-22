@@ -129,11 +129,19 @@ def edit_file(workspace: str, path: str, old_string: str, new_string: str) -> di
             "error": f"old_string appears {count} times — make it more specific by including more surrounding context.",
         }
 
+    if old_string == new_string:
+        return {
+            "error": "new_string is identical to old_string — this would be a no-op. "
+                     "You must provide DIFFERENT replacement text that actually implements your change.",
+        }
+
     new_text = text.replace(old_string, new_string, 1)
     target.write_text(new_text, encoding="utf-8")
     ws = Path(workspace).resolve()
+    patched = str(target.relative_to(ws))
     return {
-        "patched": str(target.relative_to(ws)),
+        "written": patched,              # matches files_touched tracker in subagent.py
+        "patched": patched,
         "old_lines": old_string.count("\n") + 1,
         "new_lines": new_string.count("\n") + 1,
     }

@@ -31,10 +31,15 @@ class EventType(str, Enum):
     ERROR = "error"
     LOOP_STARTED = "loop_started"
     REWARD_HACK_REJECTED = "reward_hack_rejected"
+    FIX_ATTEMPT = "fix_attempt"
     SUBAGENT_STEP = "subagent_step"
     PERMISSION_REQUEST = "permission_request"
     PERMISSION_GRANTED = "permission_granted"
     PERMISSION_DENIED = "permission_denied"
+    EXPLORATION_STARTED = "exploration_started"
+    EXPLORATION_DONE = "exploration_done"
+    INNER_LOOP_CONTINUE = "inner_loop_continue"
+    INNER_LOOP_EXIT = "inner_loop_exit"
 
 
 @dataclass

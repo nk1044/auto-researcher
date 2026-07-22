@@ -49,6 +49,7 @@ async def start() -> JSONResponse:
         return JSONResponse({"error": "coordinator not initialised"}, status_code=503)
     if _coordinator_task and not _coordinator_task.done():
         return JSONResponse({"status": "already running"})
+    _coordinator.stop_requested = False   # reset so a restarted coordinator can loop
     _coordinator_task = asyncio.create_task(_coordinator.run())
     return JSONResponse({"status": "started"})
 
