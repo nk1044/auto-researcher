@@ -29,7 +29,7 @@ github_remote: "origin"
 github_branch_prefix: "auto-researcher"
 
 # === Loop control ===
-max_subagents: 2
+max_subagents: 3
 dup_threshold: 0.97      # cosine similarity above which a hypothesis is rejected as a near-exact failure duplicate
 novelty_boost: 0.3       # temperature bump added when coordinator is forming a novelty-forced hypothesis
 

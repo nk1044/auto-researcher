@@ -355,6 +355,7 @@ class Coordinator:
                         "↑ WIN" if score > self.baseline else "↓ below baseline")
 
             # 4e. Coordinator decides: satisfied or continue inner loop?
+            logger.info("[%d] Asking coordinator whether to accept result or continue fixing…", n)
             satisfied = await self._coordinator_decide(hyp, score, remark, inner_attempt)
 
             if satisfied:
@@ -364,14 +365,16 @@ class Coordinator:
                      "reason": "coordinator_accepted"},
                     iteration=n,
                 )
-                logger.info("[%d] Coordinator accepted result after %d inner attempt(s)",
+                logger.info("[%d] → Coordinator: ACCEPT — exiting inner loop after %d attempt(s)",
                             n, inner_attempt + 1)
                 break
+
+            logger.info("[%d] → Coordinator: CONTINUE — will retry hypothesis implementation", n)
 
             # Safety net: don't spin forever if the LLM keeps saying CONTINUE
             inner_attempt += 1
             if inner_attempt >= self.max_inner_iterations:
-                logger.warning("[%d] Inner loop safety cap (%d) reached — accepting result",
+                logger.warning("[%d] Inner loop safety cap (%d) reached — forcing ACCEPT",
                                n, self.max_inner_iterations)
                 await aemit(
                     EventType.INNER_LOOP_EXIT,
@@ -387,13 +390,22 @@ class Coordinator:
                  "hypothesis": hyp.text[:80]},
                 iteration=n,
             )
-            logger.info("[%d] Inner loop continuing — attempt %d", n, inner_attempt)
+            logger.info("[%d] Inner loop continuing → attempt %d of max %d",
+                        n, inner_attempt, self.max_inner_iterations)
 
             # Clean up subagent worktrees before next inner attempt
+            logger.info("[%d] Cleaning up subagent worktrees before next attempt…", n)
             await self._cleanup_subagent_worktrees(results)
+            logger.info("[%d] Worktree cleanup done — starting inner attempt %d", n, inner_attempt)
 
-        # 5. Record outcome
+        # ── Post-inner-loop ──────────────────────────────────────────────────
+        logger.info("[%d] Inner loop finished — final score=%.4f  baseline=%.4f",
+                    n, score, self.baseline)
+
+        # 5. Record outcome in memory
         outcome = OutcomeType.WIN if score > self.baseline else OutcomeType.MISTAKE
+        logger.info("[%d] Recording outcome: %s (score=%.4f, remark=%s)",
+                    n, outcome.value.upper(), score, (remark or "none")[:120])
         record = IterationRecord(
             id=str(uuid.uuid4()),
             hypothesis=hyp.text,
@@ -411,6 +423,7 @@ class Coordinator:
             iteration=n,
         )
         await self.memory.record(record)
+        logger.info("[%d] Outcome recorded to memory", n)
         await aemit(
             EventType.MEMORY_RECORDED,
             {"outcome": outcome.value, "score": score, "iteration": n},
@@ -419,17 +432,33 @@ class Coordinator:
 
         # 6. Git checkpoint on improvement
         if score > self.baseline and integrated and integrated.diff.strip():
+            logger.info("[%d] Score improved (%.4f > %.4f) — validating diff for git checkpoint…",
+                        n, score, self.baseline)
             saved = await self._maybe_save(integrated, hyp, score, n)
             if saved:
+                logger.info("[%d] Checkpoint saved — updating baseline %.4f → %.4f",
+                            n, self.baseline, score)
                 self.baseline = score
+                logger.info("[%d] Advancing working commit to new HEAD…", n)
                 await self._advance_working_commit(integrated.path)
+                logger.info("[%d] Working commit updated: %s",
+                            n, self.state.working_commit[:12] if self.state.working_commit else "?")
+            else:
+                logger.warning("[%d] Checkpoint save failed — baseline stays at %.4f", n, self.baseline)
+        else:
+            logger.info("[%d] No improvement (%.4f ≤ %.4f) — skipping git checkpoint",
+                        n, score, self.baseline)
 
         # 7. Cleanup all worktrees for this iteration
+        logger.info("[%d] Cleaning up all worktrees for this iteration…", n)
         if integrated:
             await self._cleanup_worktrees(last_ok_results, integrated.path)
+        logger.info("[%d] Worktree cleanup complete", n)
 
         self.state.iteration += 1
         self.state.baseline_score = self.baseline
+        logger.info("[%d] Persisting state (iter=%d, baseline=%.4f)…",
+                    n, self.state.iteration, self.state.baseline_score)
         self.memory.save_state(self.state)
         logger.info("[%d] Iteration complete — outcome=%s  score=%.4f  new_baseline=%.4f",
                     n, outcome.value.upper(), score, self.baseline)
@@ -443,18 +472,22 @@ class Coordinator:
             {"iteration": n, "aspects": ["architecture", "tests", "patterns"]},
             iteration=n,
         )
-
+        logger.info("[%d] Exploration: loading file listing and slices…", n)
         file_listing = self._list_repo_files(max_files=200)
         file_slices = self._load_file_slices(max_files=25, chars_per_file=3000)
         file_contents = "\n\n".join(
             f"### {p}\n```\n{c}\n```" for p, c in file_slices.items()
         ) or "(no file contents available)"
+        logger.info("[%d] Exploration: %d files in listing, %d file slices loaded — running 3 sequential explorer subagents",
+                    n, file_listing.count("\n") + 1, len(file_slices))
+        logger.info("[%d] Exploration: running sequentially (Ollama processes one request at a time; parallel causes timeouts)", n)
 
-        arch_task = self._explore_aspect(EXPLORE_ARCH_Q, file_listing, file_contents)
-        tests_task = self._explore_aspect(EXPLORE_TESTS_Q, file_listing, file_contents)
-        patterns_task = self._explore_aspect(EXPLORE_PATTERNS_Q, file_listing, file_contents)
-
-        arch, tests, patterns = await asyncio.gather(arch_task, tests_task, patterns_task)
+        # Sequential — NOT parallel. Ollama's inference is single-threaded; sending 3
+        # concurrent requests causes 2 to sit in queue until the connection times out,
+        # producing silent empty-string exceptions.
+        arch = await self._explore_aspect("architecture", EXPLORE_ARCH_Q, file_listing, file_contents)
+        tests = await self._explore_aspect("tests", EXPLORE_TESTS_Q, file_listing, file_contents)
+        patterns = await self._explore_aspect("patterns", EXPLORE_PATTERNS_Q, file_listing, file_contents)
 
         result = ExplorationResult(
             architecture=arch,
@@ -467,16 +500,18 @@ class Coordinator:
             {"iteration": n, "key_files": result.key_files[:5]},
             iteration=n,
         )
-        logger.info("[%d] Exploration done — arch=%d chars, tests=%d chars, patterns=%d chars",
-                    n, len(arch), len(tests), len(patterns))
+        logger.info("[%d] Exploration done — arch=%d chars, tests=%d chars, patterns=%d chars, key_files=%s",
+                    n, len(arch), len(tests), len(patterns),
+                    ", ".join(result.key_files[:5]))
         return result
 
     async def _explore_aspect(
-        self, question_template: str, file_listing: str, file_contents: str
+        self, aspect: str, question_template: str, file_listing: str, file_contents: str
     ) -> str:
         """Single explorer subagent: answer one architectural question about the project."""
         from models.client import ChatMessage
 
+        logger.info("  [explorer:%s] Starting — calling coordinator model…", aspect)
         question = question_template.format(
             file_listing=file_listing,
             file_contents=file_contents[:6000],
@@ -490,10 +525,14 @@ class Coordinator:
                 model_spec=self.client.registry.coordinator,
                 messages=messages,
             )
-            return response.content.strip()
+            result = response.content.strip()
+            logger.info("  [explorer:%s] Done — %d chars returned", aspect, len(result))
+            return result
         except Exception as exc:
-            logger.warning("Explorer subagent failed: %s", exc)
-            return f"(exploration failed: {exc})"
+            # Use repr() — str(exc) is empty for httpx timeout/connection errors
+            logger.warning("  [explorer:%s] Failed: %s: %r",
+                           aspect, type(exc).__name__, exc)
+            return f"(exploration failed: {type(exc).__name__})"
 
     # ── Coordinator decision ─────────────────────────────────────────────────
 
@@ -510,12 +549,16 @@ class Coordinator:
         the first attempt (first failure always retries automatically).
         """
         if score > self.baseline:
+            logger.info("  [decide] score=%.4f > baseline=%.4f → auto-ACCEPT (improvement)", score, self.baseline)
             return True  # any improvement → accept and checkpoint
 
         if inner_attempt == 0:
+            logger.info("  [decide] first attempt failed (score=%.4f) → auto-CONTINUE (always retry once)", score)
             return False  # always give at least one retry on first failure
 
         # Ask the coordinator model whether to continue fixing or give up
+        logger.info("  [decide] attempt=%d, score=%.4f — calling coordinator model for CONTINUE/ACCEPT decision…",
+                    inner_attempt, score)
         from models.client import ChatMessage
 
         messages = [
@@ -536,13 +579,15 @@ class Coordinator:
                 model_spec=self.client.registry.coordinator,
                 messages=messages,
             )
+            logger.info("  [decide] raw model response: %s", response.content[:200])
             data = _extract_json(response.content)
             decision = data.get("decision", "ACCEPT").upper()
             reason = data.get("reason", "")
-            logger.info("Coordinator decision: %s — %s", decision, reason[:120])
+            logger.info("  [decide] → %s — %s", decision, reason[:120])
             return decision == "ACCEPT"
         except Exception as exc:
-            logger.warning("Coordinator decision LLM failed (%s) — defaulting to CONTINUE", exc)
+            logger.warning("  [decide] LLM call failed %s: %r — defaulting to CONTINUE",
+                           type(exc).__name__, exc)
             return False  # default: keep trying
 
     # ── Hypothesis formation ─────────────────────────────────────────────────
@@ -553,10 +598,17 @@ class Coordinator:
         """Assemble coordinator context and ask the model for one hypothesis."""
         n = self.state.iteration
 
+        logger.info("[%d] Hypothesis: retrieving memory (wins, failures, best_wins)…", n)
         wins = await self.memory.retrieve("improve test score", k=5, include_failures=False)
         failures = await self.memory.top_failures("improvement hypothesis", k=5)
         best_wins = await self.memory.get_best_wins(k=3)
+        logger.info("[%d] Hypothesis: memory retrieved — %d wins, %d failures, %d best_wins",
+                    n, len(wins), len(failures), len(best_wins))
+
+        logger.info("[%d] Hypothesis: loading file slices (max 20 files)…", n)
         file_slices = self._load_file_slices(max_files=20, chars_per_file=4000)
+        logger.info("[%d] Hypothesis: %d file slices loaded — assembling coordinator context…",
+                    n, len(file_slices))
 
         context = assemble_coordinator_context(
             task_spec=self._task_spec(),
@@ -568,6 +620,8 @@ class Coordinator:
             token_budget=self.token_budget,
             ratios=self.coord_ratios,
         )
+        logger.info("[%d] Hypothesis: context assembled (%d chars) — calling coordinator model…",
+                    n, len(context))
 
         arch = exploration.architecture[:600] if exploration else "(not available)"
         test_structure = exploration.test_structure[:400] if exploration else "(not available)"
@@ -596,10 +650,13 @@ class Coordinator:
             model_spec=self.client.registry.coordinator,
             messages=messages,
         )
+        logger.info("[%d] Hypothesis: model responded (%d chars) — parsing JSON…",
+                    n, len(response.content))
 
         try:
             data = _extract_json(response.content)
         except ValueError:
+            logger.warning("[%d] Hypothesis: JSON parse failed — using raw text as hypothesis", n)
             data = {"hypothesis": response.content.strip(), "rationale": ""}
 
         hyp = Hypothesis(
@@ -612,7 +669,9 @@ class Coordinator:
             {"hypothesis": hyp.text, "rationale": hyp.rationale},
             iteration=n,
         )
-        logger.info("Hypothesis formed: %s", hyp.text[:120])
+        logger.info("[%d] Hypothesis formed: %s", n, hyp.text[:120])
+        if hyp.rationale:
+            logger.info("[%d] Rationale: %s", n, hyp.rationale[:200])
         return hyp
 
     async def reform_with_novelty(self, rejected: Hypothesis) -> Hypothesis:
@@ -668,8 +727,17 @@ class Coordinator:
         """Decompose hypothesis into subtask briefs, aware of exploration and any prior failure."""
         from models.client import ChatMessage
 
+        logger.info("[%d] Decompose: loading repo file listing and file slices (attempt=%d)…",
+                    hyp.iteration, fix_attempt)
         file_listing = self._list_repo_files(max_files=200)
         file_slices = self._load_file_slices(max_files=20, chars_per_file=1500)
+        logger.info("[%d] Decompose: %d file slices loaded — building decompose prompt "
+                    "(exploration=%s, fix_attempt=%d, prev_remark=%s)…",
+                    hyp.iteration, len(file_slices),
+                    "yes" if exploration else "no",
+                    fix_attempt,
+                    repr((prev_remark or "")[:80]) if prev_remark else "none")
+
         messages_raw = make_decompose_messages(
             hypothesis=hyp,
             repo_path=self.repo_path,
@@ -681,16 +749,20 @@ class Coordinator:
             prev_remark=prev_remark,
         )
         messages = [ChatMessage(role=m["role"], content=m["content"]) for m in messages_raw]
+        logger.info("[%d] Decompose: calling coordinator model…", hyp.iteration)
 
         response = await self.client.chat(
             model_spec=self.client.registry.coordinator,
             messages=messages,
         )
+        logger.info("[%d] Decompose: model responded (%d chars) — parsing subtasks…",
+                    hyp.iteration, len(response.content))
 
         try:
             decomposition = _extract_json(response.content)
         except ValueError:
-            logger.warning("Decompose JSON parse failed; using fallback single subtask")
+            logger.warning("[%d] Decompose: JSON parse failed — falling back to single subtask",
+                           hyp.iteration)
             decomposition = {
                 "subtasks": [
                     {
@@ -704,6 +776,9 @@ class Coordinator:
             }
 
         briefs = build_subtask_briefs(hyp, decomposition, self.max_subagents)
+        logger.info("[%d] Decompose: %d subtask(s) created — %s",
+                    hyp.iteration, len(briefs),
+                    " | ".join(f"[{b.id[:6]}] {b.goal[:50]}" for b in briefs))
         await aemit(
             EventType.DECOMPOSED,
             {"hypothesis": hyp.text, "n_subtasks": len(briefs), "fix_attempt": fix_attempt},
@@ -751,15 +826,21 @@ class Coordinator:
     ) -> IntegrationResult:
         """Coordinator reviews each result and merges into one integration worktree."""
         integration_id = str(uuid.uuid4())[:8]
+        logger.info("  [integrate:%s] Creating integration worktree from commit %s…",
+                    integration_id, (self.state.working_commit or "HEAD")[:12])
         integration_path = await create_integration_worktree(
             baseline_commit=self.state.working_commit,
             repo_path=self.repo_path,
             worktree_root=self.worktree_root,
             integration_id=integration_id,
         )
+        logger.info("  [integrate:%s] Worktree created at %s", integration_id, integration_path)
 
         ok_results = [r for r in results if r.diff and r.status != TaskStatus.FAILED]
+        logger.info("  [integrate:%s] %d/%d subagent result(s) have usable diffs",
+                    integration_id, len(ok_results), len(results))
         if not ok_results:
+            logger.warning("  [integrate:%s] No usable diffs — returning empty integration", integration_id)
             return IntegrationResult(
                 hypothesis_id=hyp.id,
                 path=integration_path,
@@ -769,6 +850,7 @@ class Coordinator:
         try:
             from models.client import ChatMessage
 
+            logger.info("  [integrate:%s] Loading file slices for conflict context…", integration_id)
             file_slices = self._load_file_slices(max_files=5)
             context = assemble_integration_context(
                 hypothesis=hyp.text,
@@ -790,10 +872,13 @@ class Coordinator:
                     content=messages_typed[-1].content + file_context,
                 )
 
+            logger.info("  [integrate:%s] Calling coordinator model for LLM-guided merge…", integration_id)
             response = await self.client.chat(
                 model_spec=self.client.registry.coordinator,
                 messages=messages_typed,
             )
+            logger.info("  [integrate:%s] Model responded (%d chars) — parsing decisions…",
+                        integration_id, len(response.content))
 
             try:
                 data = _extract_json(response.content)
@@ -806,28 +891,42 @@ class Coordinator:
 
             accepted_ids = [d["subtask_id"] for d in decisions if d.get("decision") == "ACCEPT"]
             rejected_ids = [d["subtask_id"] for d in decisions if d.get("decision") == "REJECT"]
+            logger.info("  [integrate:%s] LLM decisions: %d ACCEPT, %d REJECT — merged_diff=%d chars",
+                        integration_id, len(accepted_ids), len(rejected_ids), len(merged_diff))
 
             if merged_diff.strip():
+                logger.info("  [integrate:%s] Applying LLM-merged diff to worktree…", integration_id)
                 ok = await apply_diff_to_worktree(merged_diff, integration_path)
-                if not ok:
-                    logger.warning("LLM-merged diff failed to apply; falling back to naive merge")
+                if ok:
+                    logger.info("  [integrate:%s] LLM diff applied successfully", integration_id)
+                else:
+                    logger.warning("  [integrate:%s] LLM diff failed to apply — falling back to naive merge", integration_id)
                     merged_diff, accepted_ids, rejected_ids = await naive_merge(
                         ok_results, integration_path
                     )
                     summary = "Naive sequential merge (LLM diff failed to apply)."
+                    logger.info("  [integrate:%s] Naive merge: %d accepted, %d rejected",
+                                integration_id, len(accepted_ids), len(rejected_ids))
             else:
+                logger.info("  [integrate:%s] LLM returned empty merged_diff — using naive merge", integration_id)
                 merged_diff, accepted_ids, rejected_ids = await naive_merge(
                     ok_results, integration_path
                 )
                 summary = summary or "Naive merge applied."
+                logger.info("  [integrate:%s] Naive merge: %d accepted, %d rejected",
+                            integration_id, len(accepted_ids), len(rejected_ids))
 
         except Exception as exc:
-            logger.warning("LLM integration failed (%s); falling back to naive merge", exc)
+            logger.warning("  [integrate:%s] LLM integration failed (%s) — falling back to naive merge",
+                           integration_id, exc)
             merged_diff, accepted_ids, rejected_ids = await naive_merge(
                 ok_results, integration_path
             )
             summary = "Naive sequential merge."
+            logger.info("  [integrate:%s] Naive merge: %d accepted, %d rejected",
+                        integration_id, len(accepted_ids), len(rejected_ids))
 
+        logger.info("  [integrate:%s] Reading final worktree diff…", integration_id)
         actual_diff = await get_worktree_diff(integration_path)
         files_touched: list[str] = []
         for line in actual_diff.splitlines():
@@ -836,6 +935,9 @@ class Coordinator:
                 if f not in files_touched:
                     files_touched.append(f)
 
+        logger.info("  [integrate:%s] Final diff: %d lines across %d file(s): %s",
+                    integration_id, actual_diff.count("\n"), len(files_touched),
+                    ", ".join(files_touched) or "none")
         return IntegrationResult(
             hypothesis_id=hyp.id,
             diff=actual_diff,
@@ -850,12 +952,17 @@ class Coordinator:
 
     async def _run_test(self, workspace: str) -> tuple[float, Optional[str]]:
         """Run the opaque test tool once on the integration workspace."""
+        logger.info("  [test] Invoking run_tests on workspace: %s", workspace)
+        logger.info("  [test] (This runs the target project's training/eval — may take several minutes; watch for exit code in the result)")
         result = await self.tools.call("run_tests", caller="coordinator", workspace=workspace)
+        logger.info("  [test] run_tests tool call returned — success=%s", result.success)
         if result.success and isinstance(result.value, dict):
             score = float(result.value.get("score", 0.0))
             remark = result.value.get("remark")
+            logger.info("  [test] score=%.4f  remark=%s", score, (remark or "none")[:300])
             return score, remark
-        logger.warning("Test tool error: %s", result.error)
+        logger.warning("  [test] run_tests failed — error=%s  value=%s",
+                       result.error, str(result.value)[:200] if result.value else "None")
         return 0.0, f"test error: {result.error}"
 
     # ── Save / checkpoint ────────────────────────────────────────────────────
@@ -870,13 +977,15 @@ class Coordinator:
         """Validate and save to git on score improvement."""
         from tools.validator import validate_diff
 
+        logger.info("  [save] Validating diff against protected_patterns: %s",
+                    self.protected_patterns)
         valid, reason = validate_diff(
             diff=integrated.diff,
             repo_path=self.repo_path,
             protected_patterns=self.protected_patterns,
         )
         if not valid:
-            logger.warning("Diff failed validation (reward-hack guard): %s", reason)
+            logger.warning("  [save] Diff REJECTED by reward-hack guard: %s", reason)
             await aemit(
                 EventType.REWARD_HACK_REJECTED,
                 {"reason": reason, "iteration": iteration},
@@ -884,6 +993,7 @@ class Coordinator:
             )
             return False
 
+        logger.info("  [save] Diff passed validation — calling save_to_github tool…")
         try:
             result = await self.tools.call(
                 "save_to_github",
@@ -902,17 +1012,19 @@ class Coordinator:
                     {"branch": branch, "score": score},
                     iteration=iteration,
                 )
-                logger.info("Saved to git: %s", result.value)
+                logger.info("  [save] ✓ Checkpoint committed — branch=%s  score=%.4f",
+                            branch or "(no branch)", score)
                 return True
             else:
-                logger.warning("Save failed: %s", result.error)
+                logger.warning("  [save] ✗ save_to_github tool returned failure: %s", result.error)
                 return False
         except Exception as exc:
-            logger.warning("Save exception: %s", exc)
+            logger.warning("  [save] ✗ save_to_github exception: %s", exc)
             return False
 
     async def _advance_working_commit(self, worktree_path: str) -> None:
         """Update working_commit to HEAD of the real repo after a successful save."""
+        logger.info("  [save] Reading new HEAD commit from repo…")
         proc = await asyncio.create_subprocess_exec(
             "git", "rev-parse", "HEAD",
             cwd=self.repo_path,
@@ -921,7 +1033,11 @@ class Coordinator:
         )
         stdout, _ = await proc.communicate()
         if proc.returncode == 0:
-            self.state.working_commit = stdout.decode().strip()
+            new_commit = stdout.decode().strip()
+            logger.info("  [save] working_commit advanced to %s", new_commit[:12])
+            self.state.working_commit = new_commit
+        else:
+            logger.warning("  [save] git rev-parse HEAD failed — working_commit unchanged")
 
     # ── Cleanup ──────────────────────────────────────────────────────────────
 
@@ -930,13 +1046,16 @@ class Coordinator:
     ) -> None:
         """Remove only the subagent worktrees (keep integration worktree alive)."""
         worktree_root = Path(self.worktree_root)
+        removed = 0
         if worktree_root.exists():
             for entry in worktree_root.iterdir():
                 if entry.name.startswith("subagent-") and entry.is_dir():
                     try:
                         await remove_worktree(str(entry), self.repo_path)
+                        removed += 1
                     except Exception:
                         pass
+        logger.info("  [cleanup] Removed %d subagent worktree(s)", removed)
 
     async def _cleanup_worktrees(
         self,
@@ -944,10 +1063,13 @@ class Coordinator:
         integration_path: str,
     ) -> None:
         """Remove both subagent worktrees and the integration worktree."""
+        logger.info("  [cleanup] Removing integration worktree: %s", integration_path)
         try:
             await remove_worktree(integration_path, self.repo_path)
+            logger.info("  [cleanup] Integration worktree removed")
         except Exception as exc:
-            logger.warning("Could not remove integration worktree %s: %s", integration_path, exc)
+            logger.warning("  [cleanup] Could not remove integration worktree %s: %s",
+                           integration_path, exc)
 
         await self._cleanup_subagent_worktrees(results)
 
