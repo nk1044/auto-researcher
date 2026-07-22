@@ -21,7 +21,7 @@ from tools.decorator import tool
 # Absolute path to the project directory (where main.py lives and the venv was created).
 # The agent runs code in a git worktree, but we use THIS project's venv so that
 # packages (torch, etc.) are available without recreating the environment in every worktree.
-DEFAULT_PROJECT_DIR = "/home/arc2/vscode/test"  # <-- edit me
+DEFAULT_PROJECT_DIR = "/home/arc2/vscode/moe-implementation"
 
 TIMEOUT_SECONDS = 600
 
