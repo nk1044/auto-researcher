@@ -2,11 +2,11 @@ ollama_host: "http://localhost:11434"
 
 models:
   coordinator: "qwen2.5:14b-instruct"   # planning + hypothesis — fits in ~9GB at Q4
-  default:     "qwen2.5-coder:7b"        # fallback worker — ~4GB
+  default:     "qwen2.5:14b-instruct"        # fallback worker — ~4GB
   embed:       "nomic-embed-text"         # 274MB, unchanged
 
   workers:
-    - name: "qwen2.5-coder:7b"
+    - name: "gemma4:12b"
       skills: ["code", "debug", "refactor", "implementation", "optimization", "test"]
       options:
         temperature: 0.1
