@@ -131,24 +131,9 @@ class Coordinator:
         """The infinite loop. Never returns until stop_requested is set."""
         await self._load_state()
 
-        # Always measure the real baseline on the unmodified repo if it is zero.
-        # baseline=0 can mean "never measured" (first run) or "carried over from a
-        # broken previous run" — in either case we want the true score before we start
-        # comparing agent changes against it.
-        if self.baseline == 0.0:
-            logger.info("Baseline is 0 — measuring on original repo at %s …", self.repo_path)
-            real_baseline, remark = await self._run_test(self.repo_path)
-            if real_baseline > 0.0:
-                self.baseline = real_baseline
-                self.state.baseline_score = real_baseline
-                self.memory.save_state(self.state)
-                logger.info("Baseline established: %.4f (%s)", real_baseline, remark)
-            else:
-                logger.warning(
-                    "Original repo scored 0 — check that DEFAULT_PROJECT_DIR in test.py "
-                    "is correct and that the project runs standalone. Remark: %s", remark
-                )
-
+        # Emit LOOP_STARTED immediately so the dashboard shows the system is live.
+        # Baseline measurement (if needed) happens inside the first iteration so
+        # that stop/pause signals are honoured and the UI stays responsive.
         await aemit(
             EventType.LOOP_STARTED,
             {"baseline": self.baseline, "iteration": self.state.iteration},
@@ -177,73 +162,88 @@ class Coordinator:
 
     async def _run_one_iteration(self) -> None:
         n = self.state.iteration
-        logger.info("=== Iteration %d ===", n)
+        logger.info("━━━ Iteration %d  (baseline=%.4f) ━━━", n, self.baseline)
         self._iteration_rolling_summary = ""
 
-        # 1. Form one hypothesis
+        # 0. Establish real baseline on first iteration if still 0.
+        if self.baseline == 0.0:
+            logger.info("[%d] Measuring baseline on original repo…", n)
+            await aemit(
+                EventType.TEST_SCORED,
+                {"score": 0.0, "remark": "Measuring baseline on original repo…", "baseline": 0.0},
+                iteration=n,
+            )
+            real_baseline, bl_remark = await self._run_test(self.repo_path)
+            if real_baseline > 0.0:
+                self.baseline = real_baseline
+                self.state.baseline_score = real_baseline
+                self.memory.save_state(self.state)
+                logger.info("[%d] Baseline established: %.4f", n, real_baseline)
+                await aemit(EventType.LOOP_STARTED, {"baseline": self.baseline, "iteration": n})
+            else:
+                logger.warning("[%d] Baseline score=0 — check DEFAULT_PROJECT_DIR in test.py. %s", n, bl_remark)
+
+        # 1. Form hypothesis
+        logger.info("[%d] Forming hypothesis…", n)
         hyp = await self.form_hypothesis()
         self._current_hypothesis = hyp
+        logger.info("[%d] Hypothesis: %s", n, hyp.text)
 
-        # 2. Anti-repetition gate — only block near-exact failure duplicates that
-        #    are NOT building on a past win (which would be an incremental improvement).
+        # 2. Anti-repetition gate
         is_dup = await self.memory.is_duplicate_failure(hyp.text)
         if is_dup:
             building_on_win = await self.memory.is_building_on_win(hyp.text)
             if building_on_win:
-                logger.info(
-                    "Hypothesis is similar to a failure but also close to a past win — "
-                    "allowing through as an incremental improvement attempt"
-                )
+                logger.info("[%d] Hypothesis resembles a past failure but also a win — allowing as incremental improvement", n)
             else:
-                logger.info("Hypothesis is a near-exact failure duplicate with no win nearby; reforming")
+                logger.info("[%d] Duplicate failure detected — reforming with novelty boost", n)
                 await aemit(EventType.DUP_REJECTED, {"hypothesis": hyp.text}, iteration=n)
                 hyp = await self.reform_with_novelty(hyp)
                 self._current_hypothesis = hyp
+                logger.info("[%d] Novel hypothesis: %s", n, hyp.text)
 
-        # 3. Decompose + route models
+        # 3. Decompose + route
+        logger.info("[%d] Decomposing hypothesis into subtasks…", n)
         briefs = await self.decompose(hyp)
         for b in briefs:
             model_spec, matched, fallback = self.router.select(b.required_skills)
             b.model = model_spec
             b.matched_skills = matched
             b.fallback = fallback
-            await aemit(
-                EventType.MODEL_ROUTED,
-                {
-                    "subtask_id": b.id,
-                    "model": model_spec.name,
-                    "matched_skills": matched,
-                    "fallback": fallback,
-                },
-                iteration=n,
-            )
+            await aemit(EventType.MODEL_ROUTED, {"subtask_id": b.id, "model": model_spec.name, "matched_skills": matched, "fallback": fallback}, iteration=n)
+        logger.info("[%d] %d subtask(s): %s", n, len(briefs), " | ".join(b.goal[:60] for b in briefs))
 
-        # 4. Dispatch subagents concurrently
+        # 4. Dispatch subagents
+        logger.info("[%d] Dispatching %d subagent(s)…", n, len(briefs))
         results = await self._dispatch_subagents(briefs)
         ok_results = [r for r in results if r is not None and not isinstance(r, BaseException)]
+        failed = len(results) - len(ok_results)
+        logger.info("[%d] Subagents done — %d succeeded, %d failed", n, len(ok_results), failed)
 
-        # 5. Review + integrate
+        # 5. Integrate
+        logger.info("[%d] Integrating diffs…", n)
         integrated = await self.review_and_integrate(hyp, ok_results)
-
-        # 6. Test — then fix-loop if there's a runtime/syntax error
         await aemit(EventType.REVIEW_INTEGRATE, {"hypothesis": hyp.text, "diff_len": len(integrated.diff)}, iteration=n)
+        logger.info("[%d] Integration complete — diff: %d lines, files: %s",
+                    n, integrated.diff.count("\n"), ", ".join(integrated.files_touched) or "none")
+
+        # 6. Test + fix loop
+        logger.info("[%d] Running test…", n)
         score, remark = await self._run_test(integrated.path)
-        await aemit(
-            EventType.TEST_SCORED,
-            {"score": score, "remark": remark, "baseline": self.baseline},
-            iteration=n,
-        )
+        await aemit(EventType.TEST_SCORED, {"score": score, "remark": remark, "baseline": self.baseline}, iteration=n)
+        logger.info("[%d] Test result: score=%.4f  baseline=%.4f  %s",
+                    n, score, self.baseline, "↑ WIN" if score > self.baseline else "↓ below baseline")
 
         max_fix_attempts: int = self.config.get("max_fix_attempts", 3)
         fix_history: list[dict] = []
-
         fix_attempt = 0
+
         while score <= self.baseline and fix_attempt < max_fix_attempts:
             error_info = self._parse_test_error(remark)
             if not error_info:
-                break  # not a fixable runtime/syntax error
+                break
             if not integrated.diff.strip():
-                break  # nothing was changed — no point fixing
+                break
 
             fix_history.append({
                 "attempt": fix_attempt + 1,
@@ -251,48 +251,30 @@ class Coordinator:
                 "exc_msg": error_info["exc_msg"],
                 "files": error_info["failing_files"],
             })
-            await aemit(
-                EventType.FIX_ATTEMPT,
-                {
-                    "attempt": fix_attempt + 1,
-                    "max": max_fix_attempts,
-                    "exc_type": error_info["exc_type"],
-                    "files": error_info["failing_files"],
-                    "hypothesis": hyp.text[:80],
-                },
-                iteration=n,
-            )
-            logger.info(
-                "Fix attempt %d/%d for %s: %s in %s",
-                fix_attempt + 1, max_fix_attempts, hyp.text[:60],
-                error_info["exc_type"], error_info["failing_files"],
-            )
+            logger.info("[%d] Fix attempt %d/%d — %s in %s",
+                        n, fix_attempt + 1, max_fix_attempts,
+                        error_info["exc_type"], error_info["failing_files"])
+            await aemit(EventType.FIX_ATTEMPT, {
+                "attempt": fix_attempt + 1, "max": max_fix_attempts,
+                "exc_type": error_info["exc_type"], "files": error_info["failing_files"],
+                "hypothesis": hyp.text[:80],
+            }, iteration=n)
 
             fix_brief = self._create_fix_brief(hyp, error_info, fix_attempt)
             await self._dispatch_fix_subagents([fix_brief], integrated.path)
 
             score, remark = await self._run_test(integrated.path)
-            await aemit(
-                EventType.TEST_SCORED,
-                {
-                    "score": score,
-                    "remark": remark,
-                    "baseline": self.baseline,
-                    "fix_attempt": fix_attempt + 1,
-                },
-                iteration=n,
-            )
+            await aemit(EventType.TEST_SCORED, {"score": score, "remark": remark, "baseline": self.baseline, "fix_attempt": fix_attempt + 1}, iteration=n)
+            logger.info("[%d] After fix %d: score=%.4f", n, fix_attempt + 1, score)
             fix_attempt += 1
 
-        # Augment remark with fix history so memory knows exactly what was tried
         if fix_history:
             attempts_text = "; ".join(
-                f"attempt {e['attempt']}: {e['exc_type']} in {e['files']}"
-                for e in fix_history
+                f"attempt {e['attempt']}: {e['exc_type']} in {e['files']}" for e in fix_history
             )
             remark = f"{remark or ''} | Fix loop ({fix_attempt} attempt(s)): {attempts_text}"
 
-        # 7. Record
+        # 7. Record outcome
         outcome = OutcomeType.WIN if score > self.baseline else OutcomeType.MISTAKE
         record = IterationRecord(
             id=str(uuid.uuid4()),
@@ -309,11 +291,7 @@ class Coordinator:
             iteration=n,
         )
         await self.memory.record(record)
-        await aemit(
-            EventType.MEMORY_RECORDED,
-            {"outcome": outcome.value, "score": score, "iteration": n},
-            iteration=n,
-        )
+        await aemit(EventType.MEMORY_RECORDED, {"outcome": outcome.value, "score": score, "iteration": n}, iteration=n)
 
         # 8. Save on improvement
         if score > self.baseline and integrated.diff.strip():
@@ -322,13 +300,14 @@ class Coordinator:
                 self.baseline = score
                 await self._advance_working_commit(integrated.path)
 
-        # 9. Cleanup worktrees
+        # 9. Cleanup
         await self._cleanup_worktrees(results, integrated.path)
 
-        # Advance iteration counter
         self.state.iteration += 1
         self.state.baseline_score = self.baseline
         self.memory.save_state(self.state)
+        logger.info("[%d] Iteration complete — outcome=%s  score=%.4f  new_baseline=%.4f",
+                    n, outcome.value.upper(), score, self.baseline)
 
     async def form_hypothesis(self) -> Hypothesis:
         """Assemble coordinator context and ask the model for one hypothesis."""

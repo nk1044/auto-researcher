@@ -214,7 +214,9 @@ def main() -> None:
         if args.autostart:
             import server.app as server_app
             if server_app._coordinator is not None:
-                asyncio.create_task(server_app._coordinator.run())
+                server_app._coordinator_task = asyncio.create_task(
+                    server_app._coordinator.run()
+                )
 
     server_cfg = config.get("server", {})
     uvicorn.run(

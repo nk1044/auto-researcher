@@ -179,6 +179,9 @@ class Subagent:
 
     async def run(self) -> SubtaskResult:
         """Main entry: create worktree, run ReAct loop, return result."""
+        short_id = self.brief.id[:8]
+        goal_preview = self.brief.goal[:80].replace("\n", " ")
+        logger.info("  [%s] START — %s", short_id, goal_preview)
         await aemit(
             EventType.SUBAGENT_SPAWNED,
             {
@@ -197,9 +200,12 @@ class Subagent:
             else:
                 self._worktree_path = await self._create_worktree()
             result = await self._react_loop()
+            logger.info("  [%s] DONE — status=%s  files=%s  steps=%d",
+                        short_id, result.status.value,
+                        ", ".join(result.files_touched) or "none", result.steps_taken)
             return result
         except Exception as exc:
-            logger.exception("Subagent %s crashed: %s", self.brief.id, exc)
+            logger.exception("  [%s] CRASHED: %s", short_id, exc)
             return SubtaskResult(
                 subtask_id=self.brief.id,
                 status=TaskStatus.FAILED,
@@ -207,7 +213,6 @@ class Subagent:
                 steps_taken=len(self._steps_history),
             )
         finally:
-            # Worktree cleanup is the coordinator's responsibility (it needs to read the diff).
             pass
 
     async def _create_worktree(self) -> str:
@@ -319,17 +324,9 @@ class Subagent:
             content = response.content.strip()
             step += 1
 
-            logger.info(
-                "Subagent %s step %d — content=%r  tool_calls=%d",
-                self.brief.id[:8], step,
-                content[:200],
-                len(response.tool_calls),
-            )
-
             # ── Tool calls ─────────────────────────────────────────────────
             if response.tool_calls:
                 tool_calls_total += len(response.tool_calls)
-                # Append assistant message with tool_calls
                 conversation.append(
                     ChatMessage(role="assistant", content=content, tool_calls=response.tool_calls)
                 )
@@ -345,10 +342,7 @@ class Subagent:
                             args = {}
                     tc_id = tc.get("id", name)
 
-                    logger.info(
-                        "Subagent %s: calling tool %r with args %s",
-                        self.brief.id[:8], name, json.dumps(args)[:200],
-                    )
+                    logger.info("  [%s] step %d → %s", self.brief.id[:8], step, name)
                     await aemit(
                         EventType.SUBAGENT_STEP,
                         {
@@ -373,10 +367,8 @@ class Subagent:
                         else f"ERROR: {tool_result.error}"
                     )
 
-                    logger.info(
-                        "Subagent %s: tool %r result success=%s  value=%s",
-                        self.brief.id[:8], name, tool_result.success, result_text[:300],
-                    )
+                    if not tool_result.success:
+                        logger.warning("  [%s] %s failed: %s", self.brief.id[:8], name, tool_result.error)
                     await aemit(
                         EventType.SUBAGENT_STEP,
                         {
@@ -429,10 +421,7 @@ class Subagent:
                 tool_calls_total += 1
                 conversation.append(ChatMessage(role="assistant", content=content))
 
-                logger.info(
-                    "Subagent %s: text-based tool call %r args %s",
-                    self.brief.id[:8], name, json.dumps(args)[:200],
-                )
+                logger.info("  [%s] step %d → %s (text)", self.brief.id[:8], step, name)
                 await aemit(
                     EventType.SUBAGENT_STEP,
                     {
@@ -456,10 +445,8 @@ class Subagent:
                     else f"ERROR: {tool_result.error}"
                 )
 
-                logger.info(
-                    "Subagent %s: text tool %r result success=%s value=%s",
-                    self.brief.id[:8], name, tool_result.success, result_text[:300],
-                )
+                if not tool_result.success:
+                    logger.warning("  [%s] %s failed: %s", self.brief.id[:8], name, tool_result.error)
                 await aemit(
                     EventType.SUBAGENT_STEP,
                     {
