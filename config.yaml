@@ -16,13 +16,14 @@ models:
       options:
         temperature: 0.3
 
-# === Goal ===
-# Describe in plain English what you want the AI to improve.
-# Be specific — mention problem types, quality bar, or constraints you care about.
-goal: "Improve the DSA solutions in this repository — better time/space complexity, cleaner code, and more correct edge-case handling."
+# === Goal / System Prompt ===
+# Point to a plain-text file that describes what you want the AI to improve.
+# The file can be as long as you need — it is read at runtime, not inlined here.
+# Relative paths are resolved from the directory where you run main.py.
+system_prompt_file: "system_prompt.txt"
 
 # === Target ===
-target_repo: "/Users/neerajkumar/vscode/dsa"          # REQUIRED: absolute path to the repo under improvement
+target_repo: "/home/arc2/vscode/moe-implementation"          # REQUIRED: absolute path to the repo under improvement
 worktree_root: "/tmp/auto-researcher/worktrees"
 github_remote: "origin"
 github_branch_prefix: "auto-researcher"
@@ -77,7 +78,7 @@ server:
 # Leave discord_webhook_url empty to disable Discord notifications.
 #
 notifications:
-  discord_webhook_url: ""     # paste your webhook URL here
+  discord_webhook_url: "https://discord.com/api/webhooks/1529220627259719710/_JNi8dHG0S7YvAFQCOET0gc6BaTv8zIAHrCQpjfSc6CdRW8FgATlYAkpsj8y5oIaGQQP"     # paste your webhook URL here
   dashboard_url: "http://localhost:8000"   # shown in notifications so you know where to go
 
 # === Reward-hacking safeguards ===

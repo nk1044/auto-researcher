@@ -7,6 +7,7 @@ import copy
 import json
 import logging
 import os
+import re
 from typing import TYPE_CHECKING, Any, Optional
 
 from server.events import EventType, aemit
@@ -43,7 +44,59 @@ def _strip_workspace_param(schemas: list[dict]) -> list[dict]:
     return result
 
 
-SYSTEM_PROMPT = """You are a software engineering subagent. Complete the assigned subtask by reading and editing files in your workspace using the provided tools.
+def _parse_text_tool_call(content: str) -> dict | None:
+    """Extract a tool call from text content.
+
+    Smaller models (qwen2.5 series, etc.) often output tool-call JSON as fenced
+    markdown instead of using Ollama's structured tool-call API.  This parser
+    detects that pattern so the loop can execute the tool and feed back a result.
+
+    Recognises:
+      ```json
+      {"name": "run_shell", "arguments": {"command": "..."}}
+      ```
+    and bare JSON objects with "name" + "arguments" keys anywhere in the text.
+    """
+    # 1. Fenced code block (```json … ``` or ``` … ```)
+    block = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", content, re.DOTALL)
+    if block:
+        try:
+            data = json.loads(block.group(1).strip())
+            if isinstance(data, dict) and "name" in data and "arguments" in data:
+                return data
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # 2. Any JSON object in the text that has both "name" and "arguments"
+    for match in re.finditer(r"\{", content):
+        start = match.start()
+        depth = 0
+        for i, ch in enumerate(content[start:], start):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = content[start : i + 1]
+                    try:
+                        data = json.loads(candidate)
+                        if isinstance(data, dict) and "name" in data and "arguments" in data:
+                            return data
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                    break
+
+    return None
+
+
+SYSTEM_PROMPT = """You are a software engineering subagent. Your workspace is an isolated git worktree — a complete copy of the target repository checked out at the current baseline commit. Every file you edit here is captured as a diff and evaluated against a test oracle; improvements are applied to the real repository.
+
+## Workspace setup
+- Your workspace path is shown in your context under "## Actual Workspace Path".
+- It contains the exact same files as the target repository at the baseline commit.
+- All file tools (read_file, write_file, edit_file, run_shell) operate inside this worktree automatically.
+- workspace is ALWAYS auto-injected into every tool call — do NOT pass it yourself.
+- Use ONLY relative paths (e.g. "model.py", "src/train.py"). Never use absolute paths.
 
 ## Workflow — follow this EXACTLY
 
@@ -55,18 +108,21 @@ Step 2 — Read the relevant file(s):
   Call read_file with the path you want to inspect (relative to workspace root).
 
 Step 3 — Make the change:
-  Call write_file with the full new content of the file.
-  Never truncate or summarise — write the COMPLETE file content.
+  Call write_file with the COMPLETE new content of the file.
+  Never truncate or summarise — you must output every single line of the file.
 
 Step 4 — Verify:
-  Call run_shell with command="git diff --stat" to confirm the change was recorded.
+  Call run_shell with command="git diff HEAD --stat"
+  IMPORTANT: write_file writes to disk but does NOT stage changes, so plain
+  "git diff --stat" always shows nothing. You MUST use "git diff HEAD --stat"
+  which compares the working tree against the HEAD commit.
+  If the stat shows no changed files, your write failed — check the path and retry.
 
 Step 5 — Signal completion:
   If you made at least one file change: respond with exactly DONE — <brief summary of what changed>
   If the task is impossible: respond with exactly FAILED — <reason>
 
 ## Rules
-- workspace is ALWAYS auto-injected into every tool call. Do NOT pass a workspace argument.
 - Only use paths that appeared in the Step 1 listing.
 - Do NOT call run_tests or save_to_github — those are coordinator-only.
 - Make real code changes. Do not stop without editing at least one file.
@@ -317,6 +373,82 @@ class Subagent:
                         )
                     )
                 continue  # next step after processing all tool calls
+
+            # ── Text-based tool call fallback ──────────────────────────────
+            # qwen2.5 and similar models output tool-call JSON as markdown text
+            # rather than using Ollama's structured tool-call API.  Parse and
+            # execute so the loop actually makes progress.
+            parsed_tc = _parse_text_tool_call(content) if content else None
+            if parsed_tc:
+                name = parsed_tc.get("name", "")
+                args = parsed_tc.get("arguments", {})
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except Exception:
+                        args = {}
+
+                tool_calls_total += 1
+                conversation.append(ChatMessage(role="assistant", content=content))
+
+                logger.info(
+                    "Subagent %s: text-based tool call %r args %s",
+                    self.brief.id[:8], name, json.dumps(args)[:200],
+                )
+                await aemit(
+                    EventType.SUBAGENT_STEP,
+                    {
+                        "subtask_id": self.brief.id,
+                        "step": step,
+                        "kind": "tool_call",
+                        "tool": name,
+                        "args": {k: v for k, v in args.items() if k != "content"},
+                    },
+                )
+
+                if "workspace" not in args and self._worktree_path:
+                    args["workspace"] = self._worktree_path
+
+                tool_result = await self.tools.call(
+                    name, caller="subagent", requester_id=self.brief.id, **args
+                )
+                result_text = (
+                    json.dumps(tool_result.value)
+                    if tool_result.success
+                    else f"ERROR: {tool_result.error}"
+                )
+
+                logger.info(
+                    "Subagent %s: text tool %r result success=%s value=%s",
+                    self.brief.id[:8], name, tool_result.success, result_text[:300],
+                )
+                await aemit(
+                    EventType.SUBAGENT_STEP,
+                    {
+                        "subtask_id": self.brief.id,
+                        "step": step,
+                        "kind": "tool_result",
+                        "tool": name,
+                        "success": tool_result.success,
+                        "result": result_text[:500],
+                    },
+                )
+
+                if tool_result.success and isinstance(tool_result.value, dict):
+                    written = tool_result.value.get("written")
+                    if written and written not in files_touched:
+                        files_touched.append(written)
+
+                # Feed result back as a user message — text-mode models expect
+                # the next human turn, not a structured "tool" role message.
+                conversation.append(ChatMessage(
+                    role="user",
+                    content=(
+                        f"Result of {name}:\n{result_text[:2000]}\n\n"
+                        "Continue with the next step of the workflow."
+                    ),
+                ))
+                continue
 
             # ── No tool calls — text-only response ─────────────────────────
             await aemit(

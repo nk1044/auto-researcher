@@ -75,7 +75,11 @@ def assemble_subagent_context(
         ws_files = _list_workspace_files(workspace)
         listing = "\n".join(ws_files[:100])
         brief_text += (
-            f"\n## Actual Workspace Files (USE THESE EXACT PATHS)\n"
+            f"\n## Actual Workspace Path\n"
+            f"{workspace}\n"
+            f"(This is an isolated git worktree — a full copy of the target repo at the baseline commit. "
+            f"Edit files here freely; your changes will be tested and applied if they improve the score.)\n"
+            f"\n## Actual Workspace Files (USE THESE EXACT RELATIVE PATHS — do NOT use absolute paths)\n"
             f"{listing}\n"
             f"\nNOTE: The suggested scope above may be inaccurate. "
             f"Always use file paths from the list above."

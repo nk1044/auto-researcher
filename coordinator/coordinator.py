@@ -589,10 +589,14 @@ class Coordinator:
             return False
 
     async def _advance_working_commit(self, worktree_path: str) -> None:
-        """Update working_commit to the HEAD of the integration worktree."""
+        """Update working_commit to the HEAD of the real target repo after a successful save.
+
+        The integration worktree has no new commit (changes are staged but not committed
+        there), so we read HEAD from the real repo where save_to_github committed the diff.
+        """
         proc = await asyncio.create_subprocess_exec(
             "git", "rev-parse", "HEAD",
-            cwd=worktree_path,
+            cwd=self.repo_path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -656,13 +660,18 @@ class Coordinator:
         logger.info("Coordinator shut down cleanly at iteration %d", self.state.iteration)
 
     def _task_spec(self) -> str:
-        goal = self.config.get(
-            "goal",
-            "Continuously improve the codebase's test pass-rate score.",
-        )
+        prompt_file = self.config.get("system_prompt_file", "system_prompt.txt")
+        prompt_path = Path(prompt_file)
+        if not prompt_path.is_absolute():
+            prompt_path = Path.cwd() / prompt_path
+        if prompt_path.exists():
+            goal = prompt_path.read_text().strip()
+        else:
+            goal = "Continuously improve the codebase's test pass-rate score."
+            logger.warning("system_prompt_file not found at %s — using default goal", prompt_path)
         return (
             f"Target repository: {self.repo_path}\n"
-            f"Goal: {goal}\n"
+            f"Goal:\n{goal}\n"
             f"Constraints:\n"
             f"  - Do not modify test files or held-out evaluation data.\n"
             f"  - All changes must pass the test oracle.\n"
