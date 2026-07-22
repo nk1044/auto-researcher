@@ -57,6 +57,11 @@ summary_every_n:   5       # regenerate rolling summary every N steps
 # Each inner attempt: full decompose → dispatch → integrate → test cycle.
 max_inner_iterations: 20   # safety cap; coordinator decides earlier via LLM judgment
 
+# === Exploration cache ===
+# Exploration runs one combined LLM call (was 3 sequential calls = ~6 min).
+# Result is cached and reused for this many iterations before re-exploring.
+explore_every_n: 3         # re-explore every 3 outer iterations (~6 min savings per cache hit)
+
 # === Sandbox ===
 sandbox:
   max_cpu_seconds: 120

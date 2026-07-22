@@ -12,24 +12,29 @@ from shared.types import ExplorationResult, Hypothesis, SubtaskBrief
 
 logger = logging.getLogger(__name__)
 
-DECOMPOSE_SYSTEM = """You are a software engineering coordinator. Given a hypothesis about how to improve a codebase, decompose it into independent subtasks that can be executed in parallel.
+DECOMPOSE_SYSTEM = """You are a software engineering coordinator. Given a hypothesis, decompose it into independent subtasks for parallel execution by subagents.
 
 Rules:
-1. Each subtask must be fully self-contained — subagents cannot communicate with each other.
-2. Subtasks must not have cross-dependencies (no "subtask B needs subtask A's output").
-3. Use between 1 and {max_subagents} subtasks (use 1 for simple, focused hypotheses).
-4. Each subtask must specify: goal, scope (list of file paths), constraints, expected_output, required_skills.
-5. Allowed skill tags: math, proof, numeric, code, refactor, debug, reasoning, planning, analysis, docs, testing, security, performance.
+1. Each subtask must be fully self-contained — subagents cannot communicate.
+2. No cross-dependencies between subtasks.
+3. Use 1 to {max_subagents} subtasks. Use 1 for a focused single-file change.
+4. Required fields: goal, scope, constraints, expected_output, required_skills.
+5. Skill tags: code, refactor, debug, analysis, performance, math, proof, numeric, planning, docs, testing, security.
 
-Output ONLY valid JSON matching this schema:
+CRITICAL — goal must be a precise implementation instruction, not a vague description:
+- BAD:  "Improve the SparseMoe class to use more experts"
+- GOOD: "In models/moe.py, find the SparseMoe.__init__ method and change num_experts=8 to num_experts=16. Also update any assertion or comment that references the number 8 in the same class."
+The goal must name: the exact file, the exact class/function, the exact variable or line to change, and the new value or behaviour. The subagent reads ONLY the files in scope — tell it precisely what to do there.
+
+Output ONLY valid JSON:
 {{
   "subtasks": [
     {{
-      "goal": "...",
-      "scope": ["path/to/file.py"],
-      "constraints": "...",
-      "expected_output": "...",
-      "required_skills": ["code", "refactor"]
+      "goal": "<precise instruction: file, class/function, exact change, why>",
+      "scope": ["exact/path/to/file.py"],
+      "constraints": "Do not modify test files. Do not change the public API unless the hypothesis requires it.",
+      "expected_output": "<what the diff should look like — e.g. 'num_experts changed from 8 to 16 in SparseMoe.__init__'>",
+      "required_skills": ["code"]
     }}
   ],
   "split_rationale": "..."
@@ -43,15 +48,16 @@ Target repository: {repo_path}
 Files in repo:
 {file_listing}
 
-Current file contents (read these carefully before assigning scope):
+Current file contents — read carefully to find exact class names, function names, and variable values:
 {file_contents}
 
 {exploration_section}
 {fix_section}
-Decompose this hypothesis into {max_subagents_max} or fewer independent subtasks.
-- scope must list the exact file paths the subagent should edit (from the file listing above).
-- Use the file contents to understand what each file does and assign scope accurately.
-Remember: subtasks run in parallel and cannot share context."""
+Decompose into {max_subagents_max} or fewer subtasks.
+- scope: exact file paths from the listing that the subagent must edit.
+- goal: name the exact file, class, function, variable, and the precise change — the subagent gets only these files and nothing else.
+- expected_output: describe what the resulting diff should contain.
+Remember: subtasks run in parallel, cannot share context, and each subagent sees only its scoped files."""
 
 
 def _extract_json(text: str) -> dict:

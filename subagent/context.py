@@ -77,12 +77,10 @@ def assemble_subagent_context(
         brief_text += (
             f"\n## Actual Workspace Path\n"
             f"{workspace}\n"
-            f"(This is an isolated git worktree — a full copy of the target repo at the baseline commit. "
-            f"Edit files here freely; your changes will be tested and applied if they improve the score.)\n"
-            f"\n## Actual Workspace Files (USE THESE EXACT RELATIVE PATHS — do NOT use absolute paths)\n"
+            f"\n## Actual Workspace Files (use ONLY these exact relative paths)\n"
             f"{listing}\n"
-            f"\nNOTE: The suggested scope above may be inaccurate. "
-            f"Always use file paths from the list above."
+            f"\nThe scope files listed above are pre-loaded in '## In-Scope File Contents' below. "
+            f"Read them there — do NOT call read_file for files already shown."
         )
 
     if tool_schemas:

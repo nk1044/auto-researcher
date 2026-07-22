@@ -93,38 +93,25 @@ Break out by trying a completely different area of the codebase or a different t
 Output JSON only."""
 
 # ── Project exploration ───────────────────────────────────────────────────────
+# Single combined call — was 3 sequential calls (~6 min); now 1 call (~2 min).
+# Result is cached for `explore_every_n` iterations to avoid repeating it.
 
-EXPLORE_SYSTEM = """You are a software architecture analyst. Read the provided project files carefully and answer the specific question below. Be concise, specific, and technical. Output plain text."""
+EXPLORE_SYSTEM = """You are a software architecture analyst. Read the project files and produce a structured report. Be concise, specific, and technical."""
 
-EXPLORE_ARCH_Q = """Analyze this project's architecture. Identify:
-1. Main modules/files and their responsibilities
-2. Key data structures and data flows
-3. Entry points and major execution paths
-4. How modules depend on each other
+EXPLORE_Q = """Analyze the target project and produce a report with EXACTLY these three sections (use the exact headers):
 
-Repository file listing:
-{file_listing}
+### ARCHITECTURE
+List every source file with a one-line description of its role. Describe the main data flow: how input reaches the model and how the score is computed. Name entry points.
 
-File contents:
-{file_contents}"""
+### TEST STRUCTURE
+Identify which files are test/eval files that must NEVER be modified. Describe exactly what the scoring function measures (accuracy, loss, pass rate, etc.) and what "improving the score" concretely means for this codebase.
 
-EXPLORE_TESTS_Q = """Analyze this project's test and evaluation structure. Identify:
-1. What the test oracle measures (pass rate, accuracy, score, etc.)
-2. Which files are test-related and must NOT be modified
-3. How the score is computed and what "improvement" means
-4. Any held-out data or benchmark files
-
-Repository file listing:
-{file_listing}
-
-File contents:
-{file_contents}"""
-
-EXPLORE_PATTERNS_Q = """Analyze this project's algorithms, patterns, and improvement opportunities. Identify:
-1. The primary algorithms and their computational complexity
-2. Obvious performance bottlenecks or correctness issues
-3. Code quality issues (duplication, poor abstractions, etc.)
-4. Concrete areas most likely to yield a score improvement and why
+### IMPROVEMENT OPPORTUNITIES
+For each of the top 3 most promising changes, give:
+- File path + class/function name to change
+- Current behaviour (what the code does now)
+- Proposed change (what to do instead)
+- Why it should improve the score
 
 Repository file listing:
 {file_listing}
@@ -201,6 +188,9 @@ class Coordinator:
 
         self._current_hypothesis: Optional[Hypothesis] = None
         self._iteration_rolling_summary: str = ""
+        self._cached_exploration: Optional[ExplorationResult] = None
+        self._exploration_at_iteration: int = -1
+        self._explore_every_n: int = config.get("explore_every_n", 3)
 
     async def run(self) -> None:
         """The infinite loop. Never returns until stop_requested is set."""
@@ -255,9 +245,20 @@ class Coordinator:
             else:
                 logger.warning("[%d] Baseline score=0 — check test.py. %s", n, bl_remark)
 
-        # 1. Explore project architecture via parallel explorer subagents
-        logger.info("[%d] Spawning explorer subagents…", n)
-        exploration = await self._explore_project(n)
+        # 1. Explore project architecture (cached — only re-runs every explore_every_n iterations)
+        staleness = n - self._exploration_at_iteration
+        if self._cached_exploration is None or staleness >= self._explore_every_n:
+            logger.info("[%d] Running project exploration (single LLM call — was last run %s)…",
+                        n,
+                        f"{staleness} iteration(s) ago" if self._cached_exploration else "never")
+            exploration = await self._explore_project(n)
+            self._cached_exploration = exploration
+            self._exploration_at_iteration = n
+        else:
+            logger.info("[%d] Using cached exploration from iteration %d (re-explores every %d iters — next at iter %d)",
+                        n, self._exploration_at_iteration, self._explore_every_n,
+                        self._exploration_at_iteration + self._explore_every_n)
+            exploration = self._cached_exploration
 
         # 2. Form hypothesis (informed by exploration)
         logger.info("[%d] Forming hypothesis…", n)
@@ -466,7 +467,11 @@ class Coordinator:
     # ── Exploration ──────────────────────────────────────────────────────────
 
     async def _explore_project(self, n: int) -> ExplorationResult:
-        """Spawn 3 parallel explorer subagents to understand the target project."""
+        """Single LLM call that covers architecture, test structure, and improvement opportunities.
+
+        Previously 3 sequential calls (~6 min). Now 1 call (~2 min). Result is cached
+        for explore_every_n iterations so the coordinator doesn't re-explore every loop.
+        """
         await aemit(
             EventType.EXPLORATION_STARTED,
             {"iteration": n, "aspects": ["architecture", "tests", "patterns"]},
@@ -478,17 +483,32 @@ class Coordinator:
         file_contents = "\n\n".join(
             f"### {p}\n```\n{c}\n```" for p, c in file_slices.items()
         ) or "(no file contents available)"
-        logger.info("[%d] Exploration: %d files in listing, %d file slices loaded — running 3 sequential explorer subagents",
+        logger.info("[%d] Exploration: %d files in listing, %d file slices — calling coordinator model (1 combined call)…",
                     n, file_listing.count("\n") + 1, len(file_slices))
-        logger.info("[%d] Exploration: running sequentially (Ollama processes one request at a time; parallel causes timeouts)", n)
 
-        # Sequential — NOT parallel. Ollama's inference is single-threaded; sending 3
-        # concurrent requests causes 2 to sit in queue until the connection times out,
-        # producing silent empty-string exceptions.
-        arch = await self._explore_aspect("architecture", EXPLORE_ARCH_Q, file_listing, file_contents)
-        tests = await self._explore_aspect("tests", EXPLORE_TESTS_Q, file_listing, file_contents)
-        patterns = await self._explore_aspect("patterns", EXPLORE_PATTERNS_Q, file_listing, file_contents)
+        from models.client import ChatMessage
 
+        question = EXPLORE_Q.format(
+            file_listing=file_listing,
+            file_contents=file_contents[:8000],
+        )
+        messages = [
+            ChatMessage(role="system", content=EXPLORE_SYSTEM),
+            ChatMessage(role="user", content=question),
+        ]
+        try:
+            response = await self.client.chat(
+                model_spec=self.client.registry.coordinator,
+                messages=messages,
+            )
+            raw = response.content.strip()
+            logger.info("[%d] Exploration: model responded (%d chars) — parsing sections…", n, len(raw))
+        except Exception as exc:
+            logger.warning("[%d] Exploration: LLM call failed %s: %r — using empty exploration",
+                           n, type(exc).__name__, exc)
+            raw = ""
+
+        arch, tests, patterns = self._parse_exploration_sections(raw)
         result = ExplorationResult(
             architecture=arch,
             test_structure=tests,
@@ -500,39 +520,29 @@ class Coordinator:
             {"iteration": n, "key_files": result.key_files[:5]},
             iteration=n,
         )
-        logger.info("[%d] Exploration done — arch=%d chars, tests=%d chars, patterns=%d chars, key_files=%s",
-                    n, len(arch), len(tests), len(patterns),
-                    ", ".join(result.key_files[:5]))
+        logger.info("[%d] Exploration done — arch=%d chars, tests=%d chars, patterns=%d chars",
+                    n, len(arch), len(tests), len(patterns))
         return result
 
-    async def _explore_aspect(
-        self, aspect: str, question_template: str, file_listing: str, file_contents: str
-    ) -> str:
-        """Single explorer subagent: answer one architectural question about the project."""
-        from models.client import ChatMessage
-
-        logger.info("  [explorer:%s] Starting — calling coordinator model…", aspect)
-        question = question_template.format(
-            file_listing=file_listing,
-            file_contents=file_contents[:6000],
+    def _parse_exploration_sections(self, raw: str) -> tuple[str, str, str]:
+        """Parse the three ### sections from the combined exploration response."""
+        import re
+        sections = {"ARCHITECTURE": "", "TEST STRUCTURE": "", "IMPROVEMENT OPPORTUNITIES": ""}
+        pattern = re.compile(
+            r"###\s*(ARCHITECTURE|TEST STRUCTURE|IMPROVEMENT OPPORTUNITIES)\s*\n(.*?)(?=###|\Z)",
+            re.DOTALL | re.IGNORECASE,
         )
-        messages = [
-            ChatMessage(role="system", content=EXPLORE_SYSTEM),
-            ChatMessage(role="user", content=question),
-        ]
-        try:
-            response = await self.client.chat(
-                model_spec=self.client.registry.coordinator,
-                messages=messages,
-            )
-            result = response.content.strip()
-            logger.info("  [explorer:%s] Done — %d chars returned", aspect, len(result))
-            return result
-        except Exception as exc:
-            # Use repr() — str(exc) is empty for httpx timeout/connection errors
-            logger.warning("  [explorer:%s] Failed: %s: %r",
-                           aspect, type(exc).__name__, exc)
-            return f"(exploration failed: {type(exc).__name__})"
+        for m in pattern.finditer(raw):
+            key = m.group(1).upper().strip()
+            if key in sections:
+                sections[key] = m.group(2).strip()
+
+        # Fallback: if parsing failed, dump everything into architecture
+        if not any(sections.values()) and raw:
+            logger.warning("Exploration response did not contain expected ### sections — dumping into architecture")
+            sections["ARCHITECTURE"] = raw
+
+        return sections["ARCHITECTURE"], sections["TEST STRUCTURE"], sections["IMPROVEMENT OPPORTUNITIES"]
 
     # ── Coordinator decision ─────────────────────────────────────────────────
 
